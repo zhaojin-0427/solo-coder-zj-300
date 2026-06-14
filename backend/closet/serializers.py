@@ -127,3 +127,42 @@ class TransferRecordSerializer(serializers.ModelSerializer):
         if obj.recipient:
             return TransferRecipientSerializer(obj.recipient).data
         return {'name': obj.recipient_name} if obj.recipient_name else None
+
+    def _sync_item_status(self, instance, old_status=None):
+        item = instance.item
+        new_status = instance.status
+        if not item:
+            return
+
+        if old_status is None:
+            if new_status == 'pending':
+                item.status = 'reserved'
+                item.save(update_fields=['status'])
+            elif new_status == 'completed':
+                item.status = 'given'
+                item.save(update_fields=['status'])
+            return
+
+        if old_status != new_status:
+            if new_status == 'completed':
+                item.status = 'given'
+                item.save(update_fields=['status'])
+            elif new_status == 'pending':
+                if item.status != 'given':
+                    item.status = 'reserved'
+                    item.save(update_fields=['status'])
+            elif new_status == 'cancelled':
+                if item.status in ('reserved', 'given'):
+                    item.status = 'to_give'
+                    item.save(update_fields=['status'])
+
+    def create(self, validated_data):
+        instance = super().create(validated_data)
+        self._sync_item_status(instance)
+        return instance
+
+    def update(self, instance, validated_data):
+        old_status = instance.status
+        instance = super().update(instance, validated_data)
+        self._sync_item_status(instance, old_status=old_status)
+        return instance

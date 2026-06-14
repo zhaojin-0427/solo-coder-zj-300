@@ -145,7 +145,7 @@ export default function ClothingPage() {
       title: '尺码',
       dataIndex: 'size_label',
       width: 100,
-      render: (v, r: ClothingItem) => (
+      render: (v: string, r: ClothingItem) => (
         <div>
           <Tag color="blue">{v}</Tag>
           <div style={{ color: '#888', fontSize: 11, marginTop: 4 }}>
@@ -188,7 +188,7 @@ export default function ClothingPage() {
       title: '状态',
       dataIndex: 'status',
       width: 100,
-      render: (v, r: ClothingItem) => (
+      render: (v: string, r: ClothingItem) => (
         <Tag color={statusColorMap[v] || 'default'}>{r.status_display}</Tag>
       ),
     },
@@ -196,7 +196,7 @@ export default function ClothingPage() {
       title: '购入时间',
       dataIndex: 'purchase_date',
       width: 110,
-      render: (v) => v || '-',
+      render: (v: string) => v || '-',
     },
     {
       title: '操作',

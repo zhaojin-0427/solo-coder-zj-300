@@ -163,13 +163,13 @@ export default function TransferPage() {
       title: '交接时间',
       dataIndex: 'transfer_date',
       width: 130,
-      sorter: (a, b) => dayjs(a.transfer_date).valueOf() - dayjs(b.transfer_date).valueOf(),
+      sorter: (a: TransferRecord, b: TransferRecord) => dayjs(a.transfer_date).valueOf() - dayjs(b.transfer_date).valueOf(),
     },
     {
       title: '状态',
       dataIndex: 'status',
       width: 100,
-      render: (v, r) => (
+      render: (v: string, r: TransferRecord) => (
         <Tag color={statusColor[v] || 'default'}>{r.status_display || statusLabel[v]}</Tag>
       ),
     },
