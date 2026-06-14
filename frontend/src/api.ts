@@ -7,6 +7,10 @@ import type {
   TransferRecord,
   Statistics,
   GrowthFitData,
+  SeasonPlan,
+  SeasonPlanItem,
+  ItemStatusAction,
+  PlanItemCategory,
 } from './types'
 
 const API_BASE = '/api'
@@ -61,6 +65,34 @@ export const api = {
   // Growth fit analysis
   getGrowthFit: (baby: number) =>
     axios.get<GrowthFitData>(`${API_BASE}/growth-fit/`, { params: { baby } }).then(r => r.data),
+
+  // Season plans
+  getSeasonPlans: (params?: Record<string, any>) =>
+    axios.get<SeasonPlan[]>(`${API_BASE}/season-plans/`, { params }).then(r => r.data),
+  getSeasonPlan: (id: number) =>
+    axios.get<SeasonPlan>(`${API_BASE}/season-plans/${id}/`).then(r => r.data),
+  createSeasonPlan: (data: Partial<SeasonPlan>) =>
+    axios.post<SeasonPlan>(`${API_BASE}/season-plans/`, data).then(r => r.data),
+  updateSeasonPlan: (id: number, data: Partial<SeasonPlan>) =>
+    axios.put<SeasonPlan>(`${API_BASE}/season-plans/${id}/`, data).then(r => r.data),
+  deleteSeasonPlan: (id: number) =>
+    axios.delete(`${API_BASE}/season-plans/${id}/`),
+  regenerateSeasonPlanItems: (id: number) =>
+    axios.post(`${API_BASE}/season-plans/${id}/regenerate/`).then(r => r.data),
+  batchActionSeasonPlan: (id: number, itemIds: number[], action: ItemStatusAction) =>
+    axios.post(`${API_BASE}/season-plans/${id}/batch-action/`, {
+      item_ids: itemIds,
+      action,
+    }).then(r => r.data),
+  changeCategorySeasonPlan: (id: number, itemIds: number[], category: PlanItemCategory) =>
+    axios.post(`${API_BASE}/season-plans/${id}/change-category/`, {
+      item_ids: itemIds,
+      category,
+    }).then(r => r.data),
+  completeSeasonPlan: (id: number, note?: string) =>
+    axios.post<SeasonPlan>(`${API_BASE}/season-plans/${id}/complete/`, { note }).then(r => r.data),
+  getSeasonPlanRecentStats: (baby?: number) =>
+    axios.get(`${API_BASE}/season-plans/recent-stats/`, { params: { baby } }).then(r => r.data),
 }
 
 export const categoryOptions = [
@@ -121,4 +153,31 @@ export const genderOptions = [
   { value: 'M', label: '男宝' },
   { value: 'F', label: '女宝' },
   { value: 'U', label: '未知' },
+]
+
+export const targetSeasonOptions = [
+  { value: 'spring', label: '春季' },
+  { value: 'summer', label: '夏季' },
+  { value: 'autumn', label: '秋季' },
+  { value: 'winter', label: '冬季' },
+]
+
+export const seasonPlanStatusOptions = [
+  { value: 'draft', label: '草稿' },
+  { value: 'in_progress', label: '进行中' },
+  { value: 'completed', label: '已完成' },
+]
+
+export const planItemCategoryOptions = [
+  { value: 'continue_wear', label: '本季可继续穿' },
+  { value: 'near_unsuitable', label: '即将不合身' },
+  { value: 'suggest_transfer', label: '建议转送' },
+  { value: 'next_season_prep', label: '下一季待准备' },
+]
+
+export const itemStatusActionOptions = [
+  { value: 'to_give', label: '标记待转送' },
+  { value: 'reserved', label: '标记已预定' },
+  { value: 'keep', label: '继续自留' },
+  { value: 'none', label: '无操作' },
 ]

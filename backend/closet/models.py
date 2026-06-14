@@ -176,3 +176,96 @@ class TransferRecord(models.Model):
         if self.recipient and not self.recipient_name:
             self.recipient_name = self.recipient.name
         super().save(*args, **kwargs)
+
+
+class SeasonPlan(models.Model):
+    STATUS_CHOICES = [
+        ('draft', '草稿'),
+        ('in_progress', '进行中'),
+        ('completed', '已完成'),
+    ]
+
+    SEASON_CHOICES = [
+        ('spring', '春季'),
+        ('summer', '夏季'),
+        ('autumn', '秋季'),
+        ('winter', '冬季'),
+    ]
+
+    baby = models.ForeignKey(Baby, on_delete=models.CASCADE, related_name='season_plans', verbose_name='宝宝')
+    name = models.CharField('计划名称', max_length=200)
+    target_season = models.CharField('目标季节', max_length=10, choices=SEASON_CHOICES)
+    plan_date = models.DateField('计划日期')
+    completed_date = models.DateField('完成时间', blank=True, null=True)
+    status = models.CharField('计划状态', max_length=15, choices=STATUS_CHOICES, default='draft')
+    note = models.TextField('整理备注', blank=True, null=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'season_plan'
+        ordering = ['-created_at']
+        verbose_name = '换季整理计划'
+        verbose_name_plural = verbose_name
+
+    def __str__(self):
+        return f'{self.name} - {self.get_target_season_display()}'
+
+
+class SeasonPlanItem(models.Model):
+    CATEGORY_CHOICES = [
+        ('continue_wear', '本季可继续穿'),
+        ('near_unsuitable', '即将不合身'),
+        ('suggest_transfer', '建议转送'),
+        ('next_season_prep', '下一季待准备'),
+    ]
+
+    plan = models.ForeignKey(SeasonPlan, on_delete=models.CASCADE, related_name='plan_items', verbose_name='所属计划')
+    item = models.ForeignKey(ClothingItem, on_delete=models.CASCADE, related_name='season_plan_items', verbose_name='衣物', blank=True, null=True)
+    auto_category = models.CharField('系统自动分类', max_length=20, choices=CATEGORY_CHOICES)
+    user_category = models.CharField('用户调整分类', max_length=20, choices=CATEGORY_CHOICES, blank=True, null=True)
+    item_status_action = models.CharField('批量操作状态', max_length=15, choices=[
+        ('to_give', '标记待转送'),
+        ('reserved', '标记已预定'),
+        ('keep', '继续自留'),
+        ('none', '无操作'),
+    ], default='none')
+    item_name = models.CharField('物品名称(冗余)', max_length=200, blank=True)
+    item_category = models.CharField('品类(冗余)', max_length=30, blank=True)
+    item_size_label = models.CharField('尺码(冗余)', max_length=50, blank=True)
+    item_season = models.CharField('季节(冗余)', max_length=10, blank=True)
+    item_condition = models.CharField('成色(冗余)', max_length=10, blank=True)
+    note = models.TextField('备注', blank=True, null=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'season_plan_item'
+        ordering = ['auto_category', '-created_at']
+        verbose_name = '换季计划条目'
+        verbose_name_plural = verbose_name
+
+    def __str__(self):
+        return f'{self.item_name or self.item} - {self.get_effective_category_display()}'
+
+    def get_effective_category(self):
+        return self.user_category or self.auto_category
+
+    def get_effective_category_display(self):
+        effective = self.get_effective_category()
+        cat_map = dict(self.CATEGORY_CHOICES)
+        return cat_map.get(effective, effective)
+
+    def save(self, *args, **kwargs):
+        if self.item:
+            if not self.item_name:
+                self.item_name = self.item.name
+            if not self.item_category:
+                self.item_category = self.item.category
+            if not self.item_size_label:
+                self.item_size_label = self.item.size_label or self.item.size_value
+            if not self.item_season:
+                self.item_season = self.item.season
+            if not self.item_condition:
+                self.item_condition = self.item.condition
+        super().save(*args, **kwargs)

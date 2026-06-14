@@ -8,11 +8,13 @@ from rest_framework.views import APIView
 from datetime import date, timedelta
 from collections import defaultdict
 
-from .models import Baby, GrowthRecord, ClothingItem, TransferRecipient, TransferRecord
+from .models import Baby, GrowthRecord, ClothingItem, TransferRecipient, TransferRecord, SeasonPlan, SeasonPlanItem
 from .serializers import (
     BabySerializer, GrowthRecordSerializer, ClothingItemSerializer,
     TransferRecipientSerializer, TransferRecordSerializer,
-    calculate_fit, get_baby_age_months,
+    SeasonPlanSerializer, SeasonPlanItemSerializer,
+    SeasonPlanBatchActionSerializer, SeasonPlanChangeCategorySerializer,
+    generate_auto_classified_items, calculate_fit, get_baby_age_months,
 )
 
 
@@ -145,6 +147,8 @@ class StatisticsView(APIView):
             monthly_x.append(m['month'].strftime('%Y-%m'))
             monthly_y.append(m['count'])
 
+        season_plan_stats = self._get_season_plan_stats(baby_id)
+
         return Response({
             'overview': {
                 'total_items': total_items,
@@ -163,6 +167,7 @@ class StatisticsView(APIView):
             'missing_categories': missing_categories,
             'stock_suggestions': stock_suggestions,
             'monthly_transfers': {'labels': monthly_x, 'values': monthly_y},
+            'season_plan_stats': season_plan_stats,
         })
 
     def _calculate_size_cycle(self, given_items_qs, growth_qs):
@@ -302,6 +307,124 @@ class StatisticsView(APIView):
 
         return suggestions
 
+    def _get_season_plan_stats(self, baby_id):
+        plans_qs = SeasonPlan.objects.all()
+        if baby_id:
+            plans_qs = plans_qs.filter(baby_id=baby_id)
+
+        recent_plans = plans_qs.order_by('-created_at')[:3]
+        plan_details = []
+        avg_completion_rate = 0
+        total_transfer_converted = 0
+        all_next_gaps = defaultdict(int)
+
+        for plan in recent_plans:
+            items = plan.plan_items.all()
+            total_items = items.count()
+
+            suggest_transfer_count = items.filter(
+                Q(user_category='suggest_transfer') |
+                Q(user_category__isnull=True, auto_category='suggest_transfer')
+            ).count()
+            actual_to_give = items.filter(item_status_action='to_give').count()
+            actual_reserved = items.filter(item_status_action='reserved').count()
+            total_transfer_converted += actual_to_give + actual_reserved
+
+            transfer_total = items.filter(
+                item_status_action__in=['to_give', 'reserved']
+            ).count()
+            transfer_completed = 0
+            if transfer_total > 0:
+                for pi in items.filter(
+                    item_status_action__in=['to_give', 'reserved']
+                ).select_related('item'):
+                    if pi.item and pi.item.status in ('reserved', 'given'):
+                        transfer_completed += 1
+            transfer_conversion_rate = round(
+                transfer_completed / transfer_total * 100, 1
+            ) if transfer_total > 0 else 0
+
+            if plan.status == 'completed':
+                completion_rate = 100
+            elif total_items > 0:
+                processed = items.exclude(item_status_action='none').count()
+                completion_rate = round(processed / total_items * 100, 1)
+            else:
+                completion_rate = 0
+            avg_completion_rate += completion_rate
+
+            next_season_count = items.filter(
+                Q(user_category='next_season_prep') |
+                Q(user_category__isnull=True, auto_category='next_season_prep')
+            ).count()
+            daily_use_cats = {'onesie', 'tshirt', 'pants', 'socks', 'underwear'}
+            next_cat_counts = defaultdict(int)
+            for pi in items.filter(
+                Q(user_category='next_season_prep') |
+                Q(user_category__isnull=True, auto_category='next_season_prep')
+            ).select_related('item'):
+                if pi.item:
+                    next_cat_counts[pi.item.category] += 1
+
+            gaps = []
+            cat_display = {
+                'onesie': '连体衣', 'tshirt': 'T恤', 'pants': '裤子',
+                'socks': '袜子', 'underwear': '内衣', 'sleepwear': '睡衣',
+                'coat': '外套', 'shoes': '鞋子', 'hat': '帽子',
+            }
+            for cat_code, cat_name in cat_display.items():
+                count = next_cat_counts.get(cat_code, 0)
+                recommended = 3 if cat_code in daily_use_cats else 2
+                gap = max(0, recommended - count)
+                if gap > 0:
+                    gaps.append({
+                        'category': cat_name,
+                        'code': cat_code,
+                        'gap': gap,
+                    })
+                    all_next_gaps[cat_code] += gap
+                gaps = sorted(gaps, key=lambda x: -x['gap'])
+
+            plan_details.append({
+                'plan_id': plan.id,
+                'plan_name': plan.name,
+                'target_season': plan.target_season,
+                'target_season_display': plan.get_target_season_display(),
+                'status': plan.status,
+                'status_display': plan.get_status_display(),
+                'plan_date': plan.plan_date,
+                'completed_date': plan.completed_date,
+                'total_items': total_items,
+                'suggest_transfer_count': suggest_transfer_count,
+                'actual_transfer_count': actual_to_give + actual_reserved,
+                'transfer_conversion_rate': transfer_conversion_rate,
+                'completion_rate': completion_rate,
+                'next_season_prep_count': next_season_count,
+                'next_season_gaps': gaps,
+            })
+
+        if len(recent_plans) > 0:
+            avg_completion_rate = round(avg_completion_rate / len(recent_plans), 1)
+
+        next_gap_summary = []
+        for cat_code, gap in sorted(all_next_gaps.items(), key=lambda x: -x[1]):
+            next_gap_summary.append({
+                'category': {
+                    'onesie': '连体衣', 'tshirt': 'T恤', 'pants': '裤子',
+                    'socks': '袜子', 'underwear': '内衣', 'sleepwear': '睡衣',
+                    'coat': '外套', 'shoes': '鞋子', 'hat': '帽子',
+                }.get(cat_code, cat_code),
+                'code': cat_code,
+                'total_gap': gap,
+            })
+
+        return {
+            'recent_plans': plan_details,
+            'avg_completion_rate': avg_completion_rate,
+            'total_transfer_converted': total_transfer_converted,
+            'next_season_gap_summary': next_gap_summary,
+        }
+
 
 class GrowthFitView(APIView):
     def get(self, request):
@@ -379,3 +502,162 @@ class GrowthFitView(APIView):
                 'too_big': too_big,
             }
         })
+
+
+class SeasonPlanViewSet(viewsets.ModelViewSet):
+    queryset = SeasonPlan.objects.all()
+    serializer_class = SeasonPlanSerializer
+    filterset_fields = ['baby', 'target_season', 'status']
+    ordering_fields = ['created_at', 'plan_date', 'completed_date']
+
+    @action(detail=True, methods=['post'], url_path='regenerate')
+    def regenerate_items(self, request, pk=None):
+        plan = self.get_object()
+        baby = plan.baby
+        plan.plan_items.all().delete()
+        classified_items = generate_auto_classified_items(baby, plan.target_season)
+        created_items = []
+        for ci in classified_items:
+            item_obj = SeasonPlanItem.objects.create(
+                plan=plan,
+                item=ci['item'],
+                auto_category=ci['auto_category'],
+            )
+            created_items.append(SeasonPlanItemSerializer(item_obj).data)
+        return Response({
+            'message': '已重新生成分类清单',
+            'count': len(created_items),
+            'items': created_items,
+        })
+
+    @action(detail=True, methods=['post'], url_path='batch-action')
+    def batch_action(self, request, pk=None):
+        plan = self.get_object()
+        serializer = SeasonPlanBatchActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        item_ids = serializer.validated_data['item_ids']
+        action_value = serializer.validated_data['action']
+
+        items_qs = plan.plan_items.filter(id__in=item_ids)
+        updated_count = items_qs.update(item_status_action=action_value)
+
+        if action_value in ('to_give', 'reserved', 'keep'):
+            for plan_item in items_qs.select_related('item'):
+                if plan_item.item and plan_item.item.status != 'given':
+                    plan_item.item.status = action_value
+                    plan_item.item.save(update_fields=['status', 'updated_at'])
+
+        return Response({
+            'message': f'已批量处理 {updated_count} 条记录',
+            'updated_count': updated_count,
+        })
+
+    @action(detail=True, methods=['post'], url_path='change-category')
+    def change_category(self, request, pk=None):
+        plan = self.get_object()
+        serializer = SeasonPlanChangeCategorySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        item_ids = serializer.validated_data['item_ids']
+        category = serializer.validated_data['category']
+
+        items_qs = plan.plan_items.filter(id__in=item_ids)
+        updated_count = items_qs.update(user_category=category)
+
+        return Response({
+            'message': f'已更新 {updated_count} 条分类',
+            'updated_count': updated_count,
+        })
+
+    @action(detail=True, methods=['post'], url_path='complete')
+    def complete_plan(self, request, pk=None):
+        plan = self.get_object()
+        plan.status = 'completed'
+        plan.completed_date = date.today()
+        if 'note' in request.data:
+            plan.note = request.data['note']
+        plan.save()
+        serializer = self.get_serializer(plan)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='recent-stats')
+    def recent_stats(self, request):
+        baby_id = request.query_params.get('baby')
+        plans_qs = SeasonPlan.objects.all()
+        if baby_id:
+            plans_qs = plans_qs.filter(baby_id=baby_id)
+
+        recent_plans = plans_qs.order_by('-created_at')[:3]
+        recent_plan_stats = []
+        for plan in recent_plans:
+            items = plan.plan_items.all()
+            total_items = items.count()
+            suggest_transfer_count = items.filter(
+                Q(user_category='suggest_transfer') |
+                Q(user_category__isnull=True, auto_category='suggest_transfer')
+            ).count()
+            actual_transfer_count = items.filter(
+                item_status_action__in=['to_give', 'reserved']
+            ).count()
+
+            transfer_completed = 0
+            transfer_total = items.filter(item_status_action__in=['to_give', 'reserved']).count()
+            if transfer_total > 0:
+                for pi in items.filter(item_status_action__in=['to_give', 'reserved']).select_related('item'):
+                    if pi.item and pi.item.status in ('reserved', 'given'):
+                        transfer_completed += 1
+            transfer_conversion_rate = round(
+                transfer_completed / transfer_total * 100, 1
+            ) if transfer_total > 0 else 0
+
+            completion_rate = 100 if plan.status == 'completed' else round(
+                (items.exclude(item_status_action='none').count() / total_items * 100), 1
+            ) if total_items > 0 else 0
+
+            next_season_prep_count = items.filter(
+                Q(user_category='next_season_prep') |
+                Q(user_category__isnull=True, auto_category='next_season_prep')
+            ).count()
+            daily_use_cats = {'onesie', 'tshirt', 'pants', 'socks', 'underwear'}
+            next_season_gaps = []
+            next_cat_counts = defaultdict(int)
+            for pi in items.filter(
+                Q(user_category='next_season_prep') |
+                Q(user_category__isnull=True, auto_category='next_season_prep')
+            ).select_related('item'):
+                if pi.item:
+                    next_cat_counts[pi.item.category] += 1
+            for cat_code, cat_name in [
+                ('onesie', '连体衣'), ('tshirt', 'T恤'), ('pants', '裤子'),
+                ('socks', '袜子'), ('underwear', '内衣'), ('sleepwear', '睡衣'),
+                ('coat', '外套'), ('shoes', '鞋子'), ('hat', '帽子'),
+            ]:
+                count = next_cat_counts.get(cat_code, 0)
+                recommended = 3 if cat_code in daily_use_cats else 2
+                if count < recommended:
+                    next_season_gaps.append({
+                        'category': cat_name,
+                        'code': cat_code,
+                        'current_count': count,
+                        'recommended_count': recommended,
+                        'gap': recommended - count,
+                    })
+
+            recent_plan_stats.append({
+                'plan_id': plan.id,
+                'plan_name': plan.name,
+                'target_season': plan.target_season,
+                'target_season_display': plan.get_target_season_display(),
+                'status': plan.status,
+                'status_display': plan.get_status_display(),
+                'plan_date': plan.plan_date,
+                'completed_date': plan.completed_date,
+                'total_items': total_items,
+                'suggest_transfer_count': suggest_transfer_count,
+                'actual_transfer_count': actual_transfer_count,
+                'transfer_conversion_rate': transfer_conversion_rate,
+                'completion_rate': completion_rate,
+                'next_season_prep_count': next_season_prep_count,
+                'next_season_gaps': sorted(next_season_gaps, key=lambda x: -x['gap']),
+            })
+
+        return Response({'recent_plans': recent_plan_stats})

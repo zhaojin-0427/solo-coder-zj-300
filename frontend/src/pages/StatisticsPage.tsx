@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
 import BabySelector from '../components/BabySelector'
 import { useBaby } from '../App'
-import { App as AntdApp, Card, Row, Col, Statistic, Tag, Progress, List, Alert, Empty } from 'antd'
+import {
+  App as AntdApp, Card, Row, Col, Tag, Progress, List, Alert, Empty, Divider
+} from 'antd'
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, LineChart, Line
@@ -368,6 +370,142 @@ export default function StatisticsPage() {
           </Card>
         </Col>
       </Row>
+
+      {/* Season plan stats */}
+      {data?.season_plan_stats && (data.season_plan_stats.recent_plans.length > 0 || data.season_plan_stats.next_season_gap_summary.length > 0) && (
+        <>
+          <Divider />
+          <h3 className="section-title" style={{ marginTop: 8 }}>
+            <CalendarOutlined style={{ color: '#1677ff' }} /> 换季整理计划回顾
+          </h3>
+
+          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+            <Col xs={12} sm={8}>
+              <Card size="small" className="stat-card">
+                <div style={{ color: '#888', fontSize: 12 }}>近3次计划平均完成率</div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                  <span style={{ fontSize: 24, fontWeight: 700, color: '#1677ff' }}>
+                    {data.season_plan_stats.avg_completion_rate}%
+                  </span>
+                </div>
+                <Progress
+                  percent={data.season_plan_stats.avg_completion_rate}
+                  size="small"
+                  style={{ marginTop: 8 }}
+                />
+              </Card>
+            </Col>
+            <Col xs={12} sm={8}>
+              <Card size="small" className="stat-card">
+                <div style={{ color: '#888', fontSize: 12 }}>转送转化总数</div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: '#52c41a' }}>
+                  {data.season_plan_stats.total_transfer_converted}
+                  <span style={{ fontSize: 12, color: '#888', fontWeight: 400, marginLeft: 4 }}>件</span>
+                </div>
+                <div style={{ color: '#888', fontSize: 12, marginTop: 8 }}>
+                  计划中标记待转送+已预定
+                </div>
+              </Card>
+            </Col>
+            <Col xs={24} sm={8}>
+              <Card size="small" className="stat-card">
+                <div style={{ color: '#888', fontSize: 12 }}>下一季主要缺口</div>
+                {data.season_plan_stats.next_season_gap_summary.length > 0 ? (
+                  <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {data.season_plan_stats.next_season_gap_summary.slice(0, 4).map(g => (
+                      <Tag key={g.code} color="purple">
+                        {g.category} 缺{g.total_gap}件
+                      </Tag>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 4, fontSize: 16, fontWeight: 700, color: '#52c41a' }}>
+                    ✅ 储备充足
+                  </div>
+                )}
+              </Card>
+            </Col>
+          </Row>
+
+          {data.season_plan_stats.recent_plans.length > 0 && (
+            <Row gutter={[16, 16]}>
+              <Col xs={24} md={24}>
+                <Card
+                  title={<h3 className="section-title" style={{ marginBottom: 0 }}>
+                    <UnorderedListOutlined style={{ color: '#722ed1' }} />
+                    近 3 次整理计划详情
+                  </h3>}
+                >
+                  <List
+                    dataSource={data.season_plan_stats.recent_plans}
+                    renderItem={(plan) => (
+                      <List.Item style={{ alignItems: 'flex-start', padding: '14px 0' }}>
+                        <List.Item.Meta
+                          avatar={
+                            <div
+                              style={{
+                                width: 44, height: 44, borderRadius: 10,
+                                background: plan.status === 'completed' ? '#f6ffed' : plan.status === 'in_progress' ? '#e6f4ff' : '#fafafa',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                color: plan.status === 'completed' ? '#52c41a' : plan.status === 'in_progress' ? '#1677ff' : '#8c8c8c',
+                                fontSize: 20
+                              }}
+                            >
+                              {plan.status === 'completed' ? <CheckCircleOutlined /> : plan.status === 'in_progress' ? <Progress type="dashboard" percent={plan.completion_rate} size={30} /> : <CalendarOutlined />}
+                            </div>
+                          }
+                          title={
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                              <span style={{ fontWeight: 600, fontSize: 15 }}>{plan.plan_name}</span>
+                              <Tag color="blue">{plan.target_season_display}</Tag>
+                              <Tag color={plan.status === 'completed' ? 'green' : plan.status === 'in_progress' ? 'blue' : 'default'}>
+                                {plan.status_display}
+                              </Tag>
+                            </div>
+                          }
+                          description={
+                            <div style={{ marginTop: 10 }}>
+                              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 8, color: '#666', fontSize: 13 }}>
+                                <span>📅 计划：{plan.plan_date}</span>
+                                {plan.completed_date && <span>✅ 完成：{plan.completed_date}</span>}
+                                <span>📦 物品：{plan.total_items}件</span>
+                                <span>🎁 建议转送：{plan.suggest_transfer_count}件</span>
+                                <span>💝 已转送/预定：{plan.actual_transfer_count}件</span>
+                                <span>🔄 转送转化率：{plan.transfer_conversion_rate}%</span>
+                              </div>
+                              <div style={{ marginBottom: 6 }}>
+                                <Progress
+                                  percent={plan.completion_rate}
+                                  size="small"
+                                  status={plan.status === 'completed' ? 'success' : 'active'}
+                                />
+                              </div>
+                              {plan.next_season_gaps.length > 0 && (
+                                <div style={{ marginTop: 10, padding: 10, background: '#f9f0ff', borderRadius: 6 }}>
+                                  <div style={{ fontSize: 12, color: '#531dab', marginBottom: 4, fontWeight: 600 }}>
+                                    📦 下一季待准备缺口（{plan.next_season_prep_count}件）：
+                                  </div>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                    {plan.next_season_gaps.map((g, idx) => (
+                                      <Tag key={idx} color="purple" style={{ margin: 0 }}>
+                                        {g.category} 缺{g.gap}件
+                                      </Tag>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          }
+                        />
+                      </List.Item>
+                    )}
+                  />
+                </Card>
+              </Col>
+            </Row>
+          )}
+        </>
+      )}
     </BabySelector>
   )
 }
