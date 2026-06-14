@@ -16,18 +16,18 @@ def init_db_data():
     baby = Baby.objects.create(
         name='小汤圆',
         gender='F',
-        birth_date=date(2023, 6, 15),
+        birth_date=date(2025, 8, 20),
         note='可爱的小公主'
     )
     print(f'创建宝宝: {baby.name}')
 
     base_date = date.today()
     growth_data = [
-        (base_date - timedelta(days=360), 50, 3.2),
-        (base_date - timedelta(days=270), 62, 6.5),
-        (base_date - timedelta(days=180), 70, 8.2),
-        (base_date - timedelta(days=90), 76, 9.5),
-        (base_date, 82, 10.8),
+        (base_date - timedelta(days=270), 50, 3.3),
+        (base_date - timedelta(days=180), 62, 6.8),
+        (base_date - timedelta(days=90), 70, 8.5),
+        (base_date - timedelta(days=30), 73, 9.0),
+        (base_date, 75, 9.5),
     ]
     for d, h, w in growth_data:
         GrowthRecord.objects.create(baby=baby, record_date=d, height=h, weight=w)

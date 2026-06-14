@@ -11,7 +11,8 @@ from collections import defaultdict
 from .models import Baby, GrowthRecord, ClothingItem, TransferRecipient, TransferRecord
 from .serializers import (
     BabySerializer, GrowthRecordSerializer, ClothingItemSerializer,
-    TransferRecipientSerializer, TransferRecordSerializer
+    TransferRecipientSerializer, TransferRecordSerializer,
+    calculate_fit, get_baby_age_months,
 )
 
 
@@ -102,6 +103,9 @@ class StatisticsView(APIView):
         idle_count = status_map.get('待转送', 0) + status_map.get('已预定', 0)
         idle_rate = round(idle_count / total_items * 100, 1) if total_items > 0 else 0
 
+        given_item_count = clothes_qs.filter(status='given').count()
+        given_item_rate = round(given_item_count / total_items * 100, 1) if total_items > 0 else 0
+
         total_transfers = transfers_qs.count()
         completed_transfers = transfers_qs.filter(status='completed').count()
         transfer_success_rate = round(completed_transfers / total_transfers * 100, 1) if total_transfers > 0 else 0
@@ -149,6 +153,8 @@ class StatisticsView(APIView):
                 'transfer_success_rate': transfer_success_rate,
                 'total_transfers': total_transfers,
                 'completed_transfers': completed_transfers,
+                'given_item_count': given_item_count,
+                'given_item_rate': given_item_rate,
             },
             'status_distribution': status_map,
             'category_stats': {'labels': category_labels, 'values': category_values},
@@ -194,15 +200,12 @@ class StatisticsView(APIView):
         except Baby.DoesNotExist:
             return []
 
-        today = date.today()
-        age_months = (today.year - baby.birth_date.year) * 12 + (today.month - baby.birth_date.month)
-        if today.day < baby.birth_date.day:
-            age_months -= 1
-        age_months = max(0, age_months)
+        age_months = get_baby_age_months(baby.birth_date)
 
+        future_window = 6
         items = clothes_qs.filter(
-            min_age_months__lte=age_months + 3,
-            max_age_months__gte=max(0, age_months - 3),
+            min_age_months__lte=age_months + future_window,
+            max_age_months__gte=age_months,
             status__in=['keep', 'to_give', 'reserved']
         )
 
@@ -211,18 +214,26 @@ class StatisticsView(APIView):
             cat_count[item.category] += 1
 
         missing = []
+        daily_use_cats = {'onesie', 'tshirt', 'pants', 'socks', 'underwear'}
         for cat_code, cat_name in all_categories:
             count = cat_count.get(cat_code, 0)
-            if count <= 1:
+            recommended = 3 if cat_code in daily_use_cats else 2
+            if count < recommended:
+                if count == 0:
+                    urgency = 'high'
+                elif count < recommended / 2:
+                    urgency = 'high'
+                else:
+                    urgency = 'medium'
                 missing.append({
                     'category': cat_name,
                     'code': cat_code,
                     'current_count': count,
-                    'recommended_count': 3 if cat_code in ['onesie', 'tshirt', 'pants', 'socks', 'underwear'] else 2,
-                    'urgency': 'high' if count == 0 else 'medium',
+                    'recommended_count': recommended,
+                    'urgency': urgency,
                 })
 
-        return sorted(missing, key=lambda x: x['urgency'])
+        return sorted(missing, key=lambda x: {'high': 0, 'medium': 1}[x['urgency']])
 
     def _generate_stock_suggestions(self, clothes_qs, baby_id):
         if not baby_id:
@@ -307,11 +318,7 @@ class GrowthFitView(APIView):
         current_height = latest_growth.height if latest_growth else None
         current_weight = latest_growth.weight if latest_growth else None
 
-        today = date.today()
-        age_months = (today.year - baby.birth_date.year) * 12 + (today.month - baby.birth_date.month)
-        if today.day < baby.birth_date.day:
-            age_months -= 1
-        age_months = max(0, age_months)
+        age_months = get_baby_age_months(baby.birth_date)
 
         items = ClothingItem.objects.filter(
             baby_id=baby_id,
@@ -324,39 +331,16 @@ class GrowthFitView(APIView):
         too_big = []
 
         for item in items:
-            fit = 'fits'
-            reason = ''
-
-            if current_height:
-                if current_height > item.max_height:
-                    fit = 'too_small'
-                    reason = f'身高{current_height}cm已超过上限{item.max_height}cm'
-                elif current_height >= item.max_height * 0.9:
-                    fit = 'near_limit'
-                    reason = f'身高{current_height}cm接近上限{item.max_height}cm'
-                elif current_height < item.min_height:
-                    fit = 'too_big'
-                    reason = f'身高{current_height}cm低于下限{item.min_height}cm'
-
-            if fit in ['fits', 'unknown']:
-                if age_months > item.max_age_months:
-                    fit = 'too_small'
-                    reason = f'月龄{age_months}月已超过上限{item.max_age_months}月'
-                elif age_months >= item.max_age_months * 0.9:
-                    fit = 'near_limit'
-                    reason = f'月龄{age_months}月接近上限{item.max_age_months}月'
-                elif age_months < item.min_age_months and not reason:
-                    fit = 'too_big'
-                    reason = f'月龄{age_months}月低于下限{item.min_age_months}月'
+            fit_status, fit_reason = calculate_fit(item, baby, current_height)
 
             data = ClothingItemSerializer(item).data
-            data['fit_reason'] = reason
+            data['fit_reason'] = fit_reason
 
-            if fit == 'too_small':
+            if fit_status == 'too_small':
                 too_small.append(data)
-            elif fit == 'near_limit':
+            elif fit_status == 'near_limit':
                 near_limit.append(data)
-            elif fit == 'too_big':
+            elif fit_status == 'too_big':
                 too_big.append(data)
             else:
                 fits.append(data)

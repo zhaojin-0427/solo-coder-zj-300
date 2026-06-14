@@ -1,6 +1,59 @@
 from rest_framework import serializers
 from .models import Baby, GrowthRecord, ClothingItem, TransferRecipient, TransferRecord
 
+HEIGHT_BASED_CATEGORIES = {
+    'onesie', 'tshirt', 'shirt', 'pants', 'shorts', 'dress', 'skirt',
+    'coat', 'jacket', 'sweater', 'hoodie', 'sleepwear', 'swimwear',
+    'underwear',
+}
+
+AGE_BASED_CATEGORIES = {
+    'socks', 'shoes', 'hat', 'bib', 'blanket', 'other',
+}
+
+
+def get_baby_age_months(birth_date):
+    from datetime import date
+    today = date.today()
+    age_months = (today.year - birth_date.year) * 12 + (today.month - birth_date.month)
+    if today.day < birth_date.day:
+        age_months -= 1
+    return max(0, age_months)
+
+
+def calculate_fit(item, baby, current_height=None):
+    if not baby:
+        return 'unknown', ''
+
+    age_months = get_baby_age_months(baby.birth_date)
+    cat = item.category
+
+    if cat in AGE_BASED_CATEGORIES:
+        if age_months > item.max_age_months:
+            return 'too_small', f'月龄{age_months}月已超过上限{item.max_age_months}月'
+        if age_months >= item.max_age_months * 0.9:
+            return 'near_limit', f'月龄{age_months}月接近上限{item.max_age_months}月'
+        if age_months < item.min_age_months:
+            return 'too_big', f'月龄{age_months}月低于下限{item.min_age_months}月'
+        return 'fits', f'月龄{age_months}月，适合{item.min_age_months}-{item.max_age_months}月'
+
+    if current_height:
+        if current_height > item.max_height:
+            return 'too_small', f'身高{current_height}cm已超过上限{item.max_height}cm'
+        if current_height >= item.max_height * 0.9:
+            return 'near_limit', f'身高{current_height}cm接近上限{item.max_height}cm'
+        if current_height < item.min_height:
+            return 'too_big', f'身高{current_height}cm低于下限{item.min_height}cm'
+
+    if age_months > item.max_age_months:
+        return 'too_small', f'月龄{age_months}月已超过上限{item.max_age_months}月'
+    if age_months >= item.max_age_months * 0.9:
+        return 'near_limit', f'月龄{age_months}月接近上限{item.max_age_months}月'
+    if age_months < item.min_age_months:
+        return 'too_big', f'月龄{age_months}月低于下限{item.min_age_months}月'
+
+    return 'fits', f'身高{current_height or "-"}cm，月龄{age_months}月'
+
 
 class BabySerializer(serializers.ModelSerializer):
     current_age_months = serializers.SerializerMethodField()
@@ -48,30 +101,8 @@ class ClothingItemSerializer(serializers.ModelSerializer):
             return 'unknown'
         latest_growth = baby.growth_records.order_by('-record_date').first()
         current_height = latest_growth.height if latest_growth else None
-
-        from datetime import date
-        today = date.today()
-        age_months = (today.year - baby.birth_date.year) * 12 + (today.month - baby.birth_date.month)
-        if today.day < baby.birth_date.day:
-            age_months -= 1
-        age_months = max(0, age_months)
-
-        if current_height:
-            if current_height > obj.max_height:
-                return 'too_small'
-            if current_height >= obj.max_height * 0.9:
-                return 'near_limit'
-            if current_height < obj.min_height:
-                return 'too_big'
-
-        if age_months > obj.max_age_months:
-            return 'too_small'
-        if age_months >= obj.max_age_months * 0.9:
-            return 'near_limit'
-        if age_months < obj.min_age_months:
-            return 'too_big'
-
-        return 'fits'
+        fit_status, _ = calculate_fit(obj, baby, current_height)
+        return fit_status
 
 
 class TransferRecipientSerializer(serializers.ModelSerializer):

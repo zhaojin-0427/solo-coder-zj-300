@@ -201,7 +201,9 @@ export default function TransferPage() {
 
   const completedCount = records.filter(r => r.status === 'completed').length
   const totalItems = items.length
-  const transferRate = totalItems > 0 ? Math.round((records.filter(r => r.status === 'completed').length / totalItems) * 100) : 0
+  const givenItemCount = items.filter(i => i.status === 'given').length
+  const givenItemRate = totalItems > 0 ? Math.round((givenItemCount / totalItems) * 100) : 0
+  const transferSuccessRate = records.length > 0 ? Math.round((completedCount / records.length) * 100) : 0
 
   return (
     <BabySelector
@@ -217,20 +219,30 @@ export default function TransferPage() {
         </Col>
         <Col span={6}>
           <Card size="small">
-            <div style={{ color: '#888', fontSize: 12 }}>已完成转送</div>
-            <div style={{ fontSize: 24, fontWeight: 700, color: '#389e0d' }}>{completedCount}</div>
+            <div style={{ color: '#888', fontSize: 12 }}>转送成功率</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: '#389e0d' }}>
+              {transferSuccessRate}%
+              <span style={{ fontSize: 12, color: '#888', fontWeight: 400, marginLeft: 4 }}>
+                （{completedCount}/{records.length}次）
+              </span>
+            </div>
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card size="small">
+            <div style={{ color: '#888', fontSize: 12 }}>已送出物品占比</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: '#722ed1' }}>
+              {givenItemRate}%
+              <span style={{ fontSize: 12, color: '#888', fontWeight: 400, marginLeft: 4 }}>
+                （{givenItemCount}/{totalItems}件）
+              </span>
+            </div>
           </Card>
         </Col>
         <Col span={6}>
           <Card size="small">
             <div style={{ color: '#888', fontSize: 12 }}>转送对象数</div>
             <div style={{ fontSize: 24, fontWeight: 700, color: '#1677ff' }}>{recipients.length}</div>
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card size="small">
-            <div style={{ color: '#888', fontSize: 12 }}>转送占比</div>
-            <div style={{ fontSize: 24, fontWeight: 700, color: '#722ed1' }}>{transferRate}%</div>
           </Card>
         </Col>
       </Row>
