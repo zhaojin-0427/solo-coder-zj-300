@@ -1,6 +1,7 @@
 from django.shortcuts import render
 from django.db.models import Count, Avg, Q, Sum
 from django.db.models.functions import TruncMonth
+from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -514,18 +515,53 @@ class SeasonPlanViewSet(viewsets.ModelViewSet):
     def regenerate_items(self, request, pk=None):
         plan = self.get_object()
         baby = plan.baby
+
+        old_items = plan.plan_items.select_related('item').all()
+        preserve_map = {}
+        rollback_item_ids = []
+        for old_pi in old_items:
+            if old_pi.item_id:
+                preserve_map[old_pi.item_id] = {
+                    'user_category': old_pi.user_category,
+                    'item_status_action': old_pi.item_status_action,
+                    'note': old_pi.note,
+                }
+                if old_pi.item_status_action in ('to_give', 'reserved'):
+                    rollback_item_ids.append(old_pi.item_id)
+
+        if rollback_item_ids:
+            ClothingItem.objects.filter(
+                id__in=rollback_item_ids,
+                status__in=['to_give', 'reserved']
+            ).update(status='keep', updated_at=timezone.now())
+
         plan.plan_items.all().delete()
+
         classified_items = generate_auto_classified_items(baby, plan.target_season)
         created_items = []
         for ci in classified_items:
+            item_id = ci['item'].id
+            preserved = preserve_map.get(item_id, {})
             item_obj = SeasonPlanItem.objects.create(
                 plan=plan,
                 item=ci['item'],
                 auto_category=ci['auto_category'],
+                user_category=preserved.get('user_category'),
+                item_status_action=preserved.get('item_status_action', 'none'),
+                note=preserved.get('note'),
             )
             created_items.append(SeasonPlanItemSerializer(item_obj).data)
+
+        result_msg = '已重新生成分类清单'
+        if rollback_item_ids:
+            result_msg += f'，已回滚 {len(rollback_item_ids)} 件衣物状态为自留'
+        if preserve_map:
+            preserved_user_count = sum(1 for v in preserve_map.values() if v.get('user_category') or v.get('item_status_action') != 'none')
+            if preserved_user_count > 0:
+                result_msg += f'，保留了 {preserved_user_count} 条用户调整记录'
+
         return Response({
-            'message': '已重新生成分类清单',
+            'message': result_msg,
             'count': len(created_items),
             'items': created_items,
         })
@@ -538,18 +574,60 @@ class SeasonPlanViewSet(viewsets.ModelViewSet):
         item_ids = serializer.validated_data['item_ids']
         action_value = serializer.validated_data['action']
 
-        items_qs = plan.plan_items.filter(id__in=item_ids)
-        updated_count = items_qs.update(item_status_action=action_value)
+        items_qs = plan.plan_items.filter(id__in=item_ids).select_related('item')
+        plan_items_list = list(items_qs)
+
+        updated_count = plan.plan_items.filter(id__in=item_ids).update(item_status_action=action_value)
+
+        transfer_records_created = 0
+        rollback_count = 0
 
         if action_value in ('to_give', 'reserved', 'keep'):
-            for plan_item in items_qs.select_related('item'):
+            for plan_item in plan_items_list:
                 if plan_item.item and plan_item.item.status != 'given':
                     plan_item.item.status = action_value
                     plan_item.item.save(update_fields=['status', 'updated_at'])
 
+                    if action_value in ('to_give', 'reserved'):
+                        existing = TransferRecord.objects.filter(
+                            item=plan_item.item,
+                            status__in=['pending']
+                        ).first()
+                        if not existing:
+                            transfer_status = 'pending' if action_value == 'reserved' else 'pending'
+                            TransferRecord.objects.create(
+                                item=plan_item.item,
+                                recipient=None,
+                                recipient_name='',
+                                transfer_date=date.today(),
+                                note=f'来源：换季整理计划「{plan.name}」批量操作',
+                                status=transfer_status,
+                            )
+                            transfer_records_created += 1
+
+        elif action_value == 'none':
+            for plan_item in plan_items_list:
+                if plan_item.item and plan_item.item.status in ('to_give', 'reserved'):
+                    plan_item.item.status = 'keep'
+                    plan_item.item.save(update_fields=['status', 'updated_at'])
+                    rollback_count += 1
+
+                    TransferRecord.objects.filter(
+                        item=plan_item.item,
+                        status='pending'
+                    ).update(status='cancelled')
+
+        result_msg = f'已批量处理 {updated_count} 条记录'
+        if transfer_records_created > 0:
+            result_msg += f'，自动生成 {transfer_records_created} 条待交接转送记录'
+        if rollback_count > 0:
+            result_msg += f'，已恢复 {rollback_count} 件衣物为自留状态'
+
         return Response({
-            'message': f'已批量处理 {updated_count} 条记录',
+            'message': result_msg,
             'updated_count': updated_count,
+            'transfer_records_created': transfer_records_created,
+            'rollback_count': rollback_count,
         })
 
     @action(detail=True, methods=['post'], url_path='change-category')
