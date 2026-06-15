@@ -10,6 +10,7 @@ import {
   CalendarOutlined,
   ShareAltOutlined,
   MedicineBoxOutlined,
+  ShoppingOutlined,
 } from '@ant-design/icons'
 import type { Baby } from './types'
 import { api } from './api'
@@ -21,6 +22,7 @@ import StatisticsPage from './pages/StatisticsPage'
 import SeasonPlanPage from './pages/SeasonPlanPage'
 import BorrowPage from './pages/BorrowPage'
 import CarePage from './pages/CarePage'
+import TravelPackPage from './pages/TravelPackPage'
 
 const { Sider, Content, Header } = Layout
 
@@ -71,6 +73,7 @@ export default function App() {
     { key: '/borrow', icon: <ShareAltOutlined />, label: '借穿管理' },
     { key: '/transfer', icon: <GiftOutlined />, label: '转送记录' },
     { key: '/growth-fit', icon: <RiseOutlined />, label: '成长适配' },
+    { key: '/travel-pack', icon: <ShoppingOutlined />, label: '出行打包' },
     { key: '/statistics', icon: <BarChartOutlined />, label: '统计' },
   ]
 
@@ -103,6 +106,7 @@ export default function App() {
               <Route path="/borrow" element={<BorrowPage />} />
               <Route path="/transfer" element={<TransferPage />} />
               <Route path="/growth-fit" element={<GrowthFitPage />} />
+              <Route path="/travel-pack" element={<TravelPackPage />} />
               <Route path="/statistics" element={<StatisticsPage />} />
             </Routes>
           </Content>

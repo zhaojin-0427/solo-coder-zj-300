@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Baby, GrowthRecord, ClothingItem, TransferRecipient, TransferRecord, SeasonPlan, SeasonPlanItem, BorrowObject, BorrowRecord, StorageLocation, CareRecord
+from .models import Baby, GrowthRecord, ClothingItem, TransferRecipient, TransferRecord, SeasonPlan, SeasonPlanItem, BorrowObject, BorrowRecord, StorageLocation, CareRecord, OutfitSet, OutfitSetItem, PackingTask, PackingCheckRecord
 from datetime import date, datetime
 
 HEIGHT_BASED_CATEGORIES = {
@@ -674,4 +674,270 @@ class BorrowReturnSerializer(serializers.Serializer):
 
 
 class BorrowStatisticsSerializer(serializers.Serializer):
+    pass
+
+
+class OutfitSetItemSerializer(serializers.ModelSerializer):
+    item_info = serializers.SerializerMethodField()
+    item_type_display = serializers.CharField(source='get_item_type_display', read_only=True)
+    is_available = serializers.SerializerMethodField()
+    unavailable_reason = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OutfitSetItem
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at')
+
+    def get_item_info(self, obj):
+        if obj.item:
+            return ClothingItemSummarySerializer(obj.item).data
+        return None
+
+    def get_is_available(self, obj):
+        return obj.is_available()
+
+    def get_unavailable_reason(self, obj):
+        if not obj.item:
+            return '衣物已删除'
+        if obj.item.status == 'lent':
+            return '衣物借出中'
+        if obj.item.status == 'given':
+            return '衣物已送出'
+        if obj.item.care_status == 'to_wash':
+            return '待清洗'
+        if obj.item.care_status == 'washing':
+            return '清洗中'
+        if obj.item.care_status == 'to_sterilize':
+            return '需消毒'
+        if obj.item.care_status == 'sterilizing':
+            return '消毒中'
+        if obj.item.care_status == 'to_store':
+            return '待入柜'
+        return None
+
+
+class OutfitSetSerializer(serializers.ModelSerializer):
+    baby_name = serializers.CharField(source='baby.name', read_only=True)
+    scene_display = serializers.CharField(source='get_scene_display', read_only=True)
+    season_display = serializers.CharField(source='get_season_display', read_only=True)
+    set_items = OutfitSetItemSerializer(many=True, read_only=True)
+    item_count = serializers.SerializerMethodField()
+    available_count = serializers.SerializerMethodField()
+    unavailable_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OutfitSet
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at', 'use_count', 'last_used_at')
+
+    def get_item_count(self, obj):
+        return obj.item_count()
+
+    def get_available_count(self, obj):
+        count = 0
+        for set_item in obj.set_items.all():
+            if set_item.is_available():
+                count += 1
+        return count
+
+    def get_unavailable_count(self, obj):
+        count = 0
+        for set_item in obj.set_items.all():
+            if not set_item.is_available():
+                count += 1
+        return count
+
+
+class OutfitSetCreateUpdateSerializer(serializers.ModelSerializer):
+    items = serializers.ListField(child=serializers.DictField(), write_only=True, required=False)
+
+    class Meta:
+        model = OutfitSet
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at', 'use_count', 'last_used_at')
+
+    def create(self, validated_data):
+        items_data = validated_data.pop('items', [])
+        outfit_set = super().create(validated_data)
+        self._sync_items(outfit_set, items_data)
+        return outfit_set
+
+    def update(self, instance, validated_data):
+        items_data = validated_data.pop('items', None)
+        outfit_set = super().update(instance, validated_data)
+        if items_data is not None:
+            self._sync_items(outfit_set, items_data)
+        return outfit_set
+
+    def _sync_items(self, outfit_set, items_data):
+        existing_items = {item.id: item for item in outfit_set.set_items.all()}
+        seen_ids = set()
+
+        for idx, item_data in enumerate(items_data):
+            item_id = item_data.get('id')
+            clothing_item_id = item_data.get('item')
+            item_type = item_data.get('item_type', 'must')
+            quantity = item_data.get('quantity', 1)
+            note = item_data.get('note', '')
+            sort_order = item_data.get('sort_order', idx)
+
+            if item_id and item_id in existing_items:
+                set_item = existing_items[item_id]
+                set_item.item_id = clothing_item_id
+                set_item.item_type = item_type
+                set_item.quantity = quantity
+                set_item.note = note
+                set_item.sort_order = sort_order
+                set_item.save()
+                seen_ids.add(item_id)
+            else:
+                OutfitSetItem.objects.create(
+                    set=outfit_set,
+                    item_id=clothing_item_id,
+                    item_type=item_type,
+                    quantity=quantity,
+                    note=note,
+                    sort_order=sort_order,
+                )
+
+        for item_id, item in existing_items.items():
+            if item_id not in seen_ids:
+                item.delete()
+
+
+class PackingCheckRecordSerializer(serializers.ModelSerializer):
+    original_item_info = serializers.SerializerMethodField()
+    replaced_item_info = serializers.SerializerMethodField()
+    pack_status_display = serializers.CharField(source='get_pack_status_display', read_only=True)
+    item_type_display = serializers.CharField(source='get_item_type_display', read_only=True)
+
+    class Meta:
+        model = PackingCheckRecord
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at')
+
+    def get_original_item_info(self, obj):
+        if obj.original_item:
+            return ClothingItemSummarySerializer(obj.original_item).data
+        return None
+
+    def get_replaced_item_info(self, obj):
+        if obj.replaced_item:
+            return ClothingItemSummarySerializer(obj.replaced_item).data
+        return None
+
+
+class PackingTaskSerializer(serializers.ModelSerializer):
+    baby_name = serializers.CharField(source='baby.name', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    scene_display = serializers.SerializerMethodField()
+    set_info = serializers.SerializerMethodField()
+    check_items = PackingCheckRecordSerializer(many=True, read_only=True)
+    grouped_items = serializers.SerializerMethodField()
+    stats = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PackingTask
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at', 'packing_completed_at', 'missing_count', 'replace_count')
+
+    def get_scene_display(self, obj):
+        if obj.scene:
+            scene_map = dict(OutfitSet.SCENE_CHOICES)
+            return scene_map.get(obj.scene, obj.scene)
+        return None
+
+    def get_set_info(self, obj):
+        if obj.set:
+            return OutfitSetSerializer(obj.set).data
+        return None
+
+    def get_grouped_items(self, obj):
+        items = obj.check_items.all()
+        result = {
+            'must': [],
+            'optional': [],
+            'need_replace': [],
+            'missing': [],
+        }
+        for item in items:
+            if item.pack_status == 'missing':
+                result['missing'].append(PackingCheckRecordSerializer(item).data)
+            elif not item.original_available or item.pack_status == 'replaced':
+                result['need_replace'].append(PackingCheckRecordSerializer(item).data)
+            elif item.item_type == 'must':
+                result['must'].append(PackingCheckRecordSerializer(item).data)
+            else:
+                result['optional'].append(PackingCheckRecordSerializer(item).data)
+        return result
+
+    def get_stats(self, obj):
+        items = obj.check_items.all()
+        total = items.count()
+        packed = items.filter(pack_status='packed').count()
+        replaced = items.filter(pack_status='replaced').count()
+        missing = items.filter(pack_status='missing').count()
+        pending = items.filter(pack_status='pending').count()
+        must_total = items.filter(item_type='must').count()
+        must_packed = items.filter(item_type='must', pack_status='packed').count()
+        return {
+            'total': total,
+            'packed': packed,
+            'replaced': replaced,
+            'missing': missing,
+            'pending': pending,
+            'must_total': must_total,
+            'must_packed': must_packed,
+            'progress': round((packed + replaced) / total * 100, 1) if total > 0 else 0,
+        }
+
+
+class PackingTaskCreateSerializer(serializers.ModelSerializer):
+    set_id = serializers.IntegerField(write_only=True, required=False)
+
+    class Meta:
+        model = PackingTask
+        fields = ['baby', 'name', 'scene', 'trip_date', 'note', 'set_id']
+
+    def create(self, validated_data):
+        set_id = validated_data.pop('set_id', None)
+        outfit_set = None
+        if set_id:
+            try:
+                outfit_set = OutfitSet.objects.get(id=set_id)
+                validated_data['set'] = outfit_set
+            except OutfitSet.DoesNotExist:
+                pass
+
+        task = super().create(validated_data)
+
+        if outfit_set:
+            for idx, set_item in enumerate(outfit_set.set_items.all().order_by('sort_order', '-created_at')):
+                is_available = set_item.is_available()
+                PackingCheckRecord.objects.create(
+                    task=task,
+                    set_item=set_item,
+                    original_item=set_item.item,
+                    item_name=set_item.item.name if set_item.item else '未知物品',
+                    item_category=set_item.item.category if set_item.item else '',
+                    item_type=set_item.item_type,
+                    pack_status='pending' if is_available else 'pending',
+                    original_available=is_available,
+                    sort_order=idx,
+                )
+
+        return task
+
+
+class PackingTaskCompleteSerializer(serializers.Serializer):
+    note = serializers.CharField(required=False, allow_blank=True)
+
+
+class PackingItemUpdateSerializer(serializers.Serializer):
+    pack_status = serializers.ChoiceField(choices=['packed', 'replaced', 'missing', 'pending'])
+    replaced_item_id = serializers.IntegerField(required=False, allow_null=True)
+    note = serializers.CharField(required=False, allow_blank=True)
+
+
+class OutfitSetStatisticsSerializer(serializers.Serializer):
     pass

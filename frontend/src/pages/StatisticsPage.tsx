@@ -11,7 +11,8 @@ import {
 import {
   WarningOutlined, BulbOutlined, FireOutlined, CheckCircleOutlined,
   UnorderedListOutlined, CalendarOutlined, SwapOutlined, MedicineBoxOutlined,
-  ClockCircleOutlined, HomeOutlined, ExclamationCircleOutlined
+  ClockCircleOutlined, HomeOutlined, ExclamationCircleOutlined, ShoppingOutlined,
+  StarOutlined
 } from '@ant-design/icons'
 import { api, careStatusTagColors } from '../api'
 import type { Statistics } from '../types'
@@ -372,6 +373,178 @@ export default function StatisticsPage() {
                     icon={<CheckCircleOutlined />}
                     message="太棒了！"
                     description="所有衣物都已及时收纳，没有长期未入柜的衣物。"
+                  />
+                )}
+              </Card>
+            </Col>
+          </Row>
+        </>
+      )}
+
+      {/* Outfit set statistics */}
+      {data?.outfit_set_stats && (
+        <>
+          <h3 className="section-title">
+            <ShoppingOutlined style={{ color: '#722ed1' }} /> 衣物套装与出行打包统计
+          </h3>
+          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+            <Col xs={12} sm={8} md={4}>
+              <Card className="stat-card">
+                <div className="stat-value" style={{ color: '#722ed1' }}>
+                  {data.outfit_set_stats.total_sets || 0}
+                </div>
+                <div className="stat-label">套装总数</div>
+              </Card>
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <Card className="stat-card">
+                <div className="stat-value" style={{ color: '#1677ff' }}>
+                  {data.outfit_set_stats.recent_30d_use_count || 0}
+                </div>
+                <div className="stat-label">近30天使用次数</div>
+              </Card>
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <Card className="stat-card">
+                <div className="stat-value" style={{ color: '#52c41a' }}>
+                  {data.outfit_set_stats.total_packing_tasks || 0}
+                </div>
+                <div className="stat-label">累计打包完成</div>
+              </Card>
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <Card className="stat-card">
+                <div style={{ marginBottom: 8 }}>
+                  <Progress
+                    type="dashboard"
+                    percent={100 - (data.outfit_set_stats.missing_rate || 0)}
+                    strokeColor="#52c41a"
+                    size={60}
+                  />
+                </div>
+                <div className="stat-label">打包完整率</div>
+              </Card>
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <Card className="stat-card">
+                <div className="stat-value" style={{ color: '#fa8c16' }}>
+                  {data.outfit_set_stats.replace_count || 0}
+                </div>
+                <div className="stat-label">不可用衣物替换次数</div>
+              </Card>
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <Card className="stat-card">
+                <div className="stat-value" style={{ color: '#ff4d4f' }}>
+                  {data.outfit_set_stats.total_missing || 0}
+                </div>
+                <div className="stat-label">累计缺失件数</div>
+              </Card>
+            </Col>
+          </Row>
+
+          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+            <Col xs={24} md={12}>
+              <Card
+                title={<h3 className="section-title" style={{ marginBottom: 0 }}>
+                  <StarOutlined style={{ color: '#faad14' }} /> 最常用套装
+                </h3>}
+              >
+                {data.outfit_set_stats.most_used_sets?.length > 0 ? (
+                  <List
+                    itemLayout="horizontal"
+                    dataSource={data.outfit_set_stats.most_used_sets}
+                    renderItem={(set: any) => (
+                      <List.Item style={{ borderBottom: 'none', padding: '10px 0' }}>
+                        <List.Item.Meta
+                          avatar={
+                            <div
+                              style={{
+                                width: 40, height: 40, borderRadius: 8,
+                                background: '#f9f0ff',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                color: '#722ed1', fontSize: 16, fontWeight: 700
+                              }}
+                            >
+                              {set.use_count}
+                            </div>
+                          }
+                          title={
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ fontWeight: 600 }}>{set.name}</span>
+                              {set.scene_display && (
+                                <Tag color="purple">{set.scene_display}</Tag>
+                              )}
+                            </div>
+                          }
+                          description={
+                            <div style={{ fontSize: 12, color: '#888' }}>
+                              累计使用 {set.use_count} 次
+                            </div>
+                          }
+                        />
+                      </List.Item>
+                    )}
+                  />
+                ) : (
+                  <Alert
+                    type="info"
+                    showIcon
+                    icon={<ShoppingOutlined />}
+                    message="暂无套装使用记录"
+                    description="在「出行打包」页面创建衣物套装并使用后，这里将展示常用套装排行。"
+                  />
+                )}
+              </Card>
+            </Col>
+
+            <Col xs={24} md={12}>
+              <Card
+                title={<h3 className="section-title" style={{ marginBottom: 0 }}>
+                  <CalendarOutlined style={{ color: '#13c2c2' }} /> 高频出行场景
+                </h3>}
+              >
+                {data.outfit_set_stats.frequent_scenes?.length > 0 ? (
+                  <List
+                    itemLayout="horizontal"
+                    dataSource={data.outfit_set_stats.frequent_scenes}
+                    renderItem={(scene: any) => (
+                      <List.Item style={{ borderBottom: 'none', padding: '10px 0' }}>
+                        <List.Item.Meta
+                          avatar={
+                            <div
+                              style={{
+                                width: 40, height: 40, borderRadius: 8,
+                                background: '#e6fffb',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                color: '#13c2c2', fontSize: 16, fontWeight: 700
+                              }}
+                            >
+                              {scene.count}
+                            </div>
+                          }
+                          title={
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ fontWeight: 600 }}>{scene.scene_display}</span>
+                              <Tag color="cyan">{scene.count} 次</Tag>
+                            </div>
+                          }
+                          description={
+                            <div style={{ fontSize: 12, color: '#888' }}>
+                              出行打包场景使用频次
+                            </div>
+                          }
+                        />
+                      </List.Item>
+                    )}
+                  />
+                ) : (
+                  <Alert
+                    type="info"
+                    showIcon
+                    icon={<CalendarOutlined />}
+                    message="暂无出行场景数据"
+                    description="完成打包任务后，这里将展示高频出行场景统计。"
                   />
                 )}
               </Card>

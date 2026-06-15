@@ -22,6 +22,12 @@ import type {
   SterilizeMethod,
   DryMethod,
   CareType,
+  OutfitSet,
+  OutfitSetItem,
+  PackingTask,
+  PackingCheckRecord,
+  PackingStatus,
+  OutfitSetStatistics,
 } from './types'
 
 const API_BASE = '/api'
@@ -188,6 +194,52 @@ export const api = {
       `${API_BASE}/clothing-items/batch-store/`,
       data
     ).then(r => r.data),
+
+  // Outfit sets
+  getOutfitSets: (params?: Record<string, any>) =>
+    axios.get<OutfitSet[]>(`${API_BASE}/outfit-sets/`, { params }).then(r => r.data),
+  getOutfitSet: (id: number) =>
+    axios.get<OutfitSet>(`${API_BASE}/outfit-sets/${id}/`).then(r => r.data),
+  createOutfitSet: (data: Partial<OutfitSet> & { items?: any[] }) =>
+    axios.post<OutfitSet>(`${API_BASE}/outfit-sets/`, data).then(r => r.data),
+  updateOutfitSet: (id: number, data: Partial<OutfitSet> & { items?: any[] }) =>
+    axios.put<OutfitSet>(`${API_BASE}/outfit-sets/${id}/`, data).then(r => r.data),
+  deleteOutfitSet: (id: number) =>
+    axios.delete(`${API_BASE}/outfit-sets/${id}/`),
+  getOutfitSetAvailableItems: (baby: number) =>
+    axios.get<{ count: number; items: ClothingItem[] }>(`${API_BASE}/outfit-sets/available-items/`, { params: { baby } }).then(r => r.data),
+  checkOutfitSetAvailability: (id: number) =>
+    axios.get<{ available_count: number; unavailable_count: number; available_items: OutfitSetItem[]; unavailable_items: OutfitSetItem[] }>(
+      `${API_BASE}/outfit-sets/${id}/check-availability/`
+    ).then(r => r.data),
+
+  // Packing tasks
+  getPackingTasks: (params?: Record<string, any>) =>
+    axios.get<PackingTask[]>(`${API_BASE}/packing-tasks/`, { params }).then(r => r.data),
+  getPackingTask: (id: number) =>
+    axios.get<PackingTask>(`${API_BASE}/packing-tasks/${id}/`).then(r => r.data),
+  createPackingTask: (data: { baby: number; name: string; scene?: string; trip_date?: string; note?: string; set_id?: number }) =>
+    axios.post<PackingTask>(`${API_BASE}/packing-tasks/`, data).then(r => r.data),
+  updatePackingTask: (id: number, data: Partial<PackingTask>) =>
+    axios.put<PackingTask>(`${API_BASE}/packing-tasks/${id}/`, data).then(r => r.data),
+  deletePackingTask: (id: number) =>
+    axios.delete(`${API_BASE}/packing-tasks/${id}/`),
+  completePackingTask: (id: number, note?: string) =>
+    axios.post<{ message: string; task: PackingTask }>(`${API_BASE}/packing-tasks/${id}/complete/`, { note }).then(r => r.data),
+  cancelPackingTask: (id: number) =>
+    axios.post<{ message: string; task: PackingTask }>(`${API_BASE}/packing-tasks/${id}/cancel/`).then(r => r.data),
+  updatePackingItem: (taskId: number, itemId: number, data: { pack_status: PackingStatus; replaced_item_id?: number | null; note?: string }) =>
+    axios.post<{ message: string; item: PackingCheckRecord }>(
+      `${API_BASE}/packing-tasks/${taskId}/items/${itemId}/update/`,
+      data
+    ).then(r => r.data),
+  getReplaceSuggestions: (taskId: number, itemId: number) =>
+    axios.get<{ count: number; items: ClothingItem[] }>(
+      `${API_BASE}/packing-tasks/${taskId}/replace-suggestions/`,
+      { params: { item_id: itemId } }
+    ).then(r => r.data),
+  getPackingStatistics: (baby?: number) =>
+    axios.get<OutfitSetStatistics>(`${API_BASE}/packing-tasks/statistics/`, { params: { baby } }).then(r => r.data),
 }
 
 export const categoryOptions = [
@@ -407,4 +459,51 @@ export const careStatusTagColors: Record<string, string> = {
   to_store: 'geekblue',
   stored: 'green',
   in_use: 'cyan',
+}
+
+export const outfitSceneOptions = [
+  { value: 'daily_outing', label: '日常外出', emoji: '🚶' },
+  { value: 'kindergarten', label: '幼儿园备用', emoji: '🏫' },
+  { value: 'travel', label: '旅行过夜', emoji: '✈️' },
+  { value: 'photo', label: '拍照穿搭', emoji: '📸' },
+  { value: 'emergency_cold', label: '降温应急包', emoji: '❄️' },
+  { value: 'other', label: '其他', emoji: '📦' },
+]
+
+export const itemTypeOptions = [
+  { value: 'must', label: '必带' },
+  { value: 'optional', label: '可选' },
+]
+
+export const packingStatusOptions = [
+  { value: 'pending', label: '待确认' },
+  { value: 'packed', label: '已打包' },
+  { value: 'replaced', label: '已替换' },
+  { value: 'missing', label: '缺失' },
+]
+
+export const packingTaskStatusOptions = [
+  { value: 'draft', label: '待打包' },
+  { value: 'packing', label: '打包中' },
+  { value: 'completed', label: '已完成' },
+  { value: 'cancelled', label: '已取消' },
+]
+
+export const packingStatusTagColors: Record<string, string> = {
+  pending: 'default',
+  packed: 'green',
+  replaced: 'orange',
+  missing: 'red',
+}
+
+export const packingTaskStatusColors: Record<string, string> = {
+  draft: 'default',
+  packing: 'processing',
+  completed: 'success',
+  cancelled: 'error',
+}
+
+export const itemTypeTagColors: Record<string, string> = {
+  must: 'red',
+  optional: 'blue',
 }

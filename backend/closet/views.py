@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 from datetime import date, timedelta, datetime
 from collections import defaultdict
 
-from .models import Baby, GrowthRecord, ClothingItem, TransferRecipient, TransferRecord, SeasonPlan, SeasonPlanItem, BorrowObject, BorrowRecord, StorageLocation, CareRecord
+from .models import Baby, GrowthRecord, ClothingItem, TransferRecipient, TransferRecord, SeasonPlan, SeasonPlanItem, BorrowObject, BorrowRecord, StorageLocation, CareRecord, OutfitSet, OutfitSetItem, PackingTask, PackingCheckRecord
 from .serializers import (
     BabySerializer, GrowthRecordSerializer, ClothingItemSerializer,
     ClothingItemSummarySerializer,
@@ -21,6 +21,9 @@ from .serializers import (
     BorrowRecordSummarySerializer,
     StorageLocationSerializer, CareRecordSerializer,
     CareBatchActionSerializer, CareBatchWashSerializer, CareBatchStoreSerializer,
+    OutfitSetSerializer, OutfitSetItemSerializer, OutfitSetCreateUpdateSerializer,
+    PackingTaskSerializer, PackingTaskCreateSerializer, PackingTaskCompleteSerializer,
+    PackingCheckRecordSerializer, PackingItemUpdateSerializer,
 )
 
 
@@ -714,6 +717,8 @@ class StatisticsView(APIView):
             'wash_method_distribution': wash_method_dist,
         }
 
+        outfit_set_stats = self._get_outfit_set_stats(baby_id)
+
         return Response({
             'overview': {
                 'total_items': total_items,
@@ -737,6 +742,7 @@ class StatisticsView(APIView):
             'season_plan_stats': season_plan_stats,
             'borrow_stats': borrow_stats,
             'care_stats': care_stats,
+            'outfit_set_stats': outfit_set_stats,
         })
 
     def _calculate_size_cycle(self, given_items_qs, growth_qs):
@@ -992,6 +998,67 @@ class StatisticsView(APIView):
             'avg_completion_rate': avg_completion_rate,
             'total_transfer_converted': total_transfer_converted,
             'next_season_gap_summary': next_gap_summary,
+        }
+
+    def _get_outfit_set_stats(self, baby_id):
+        sets_qs = OutfitSet.objects.all()
+        tasks_qs = PackingTask.objects.all()
+        if baby_id:
+            sets_qs = sets_qs.filter(baby_id=baby_id)
+            tasks_qs = tasks_qs.filter(baby_id=baby_id)
+
+        thirty_days_ago = date.today() - timedelta(days=30)
+
+        recent_30d_use_count = tasks_qs.filter(
+            status='completed',
+            packing_completed_at__gte=thirty_days_ago,
+        ).count()
+
+        most_used_sets_qs = sets_qs.filter(
+            use_count__gt=0
+        ).order_by('-use_count')[:5]
+
+        most_used_sets = []
+        for s in most_used_sets_qs:
+            most_used_sets.append({
+                'id': s.id,
+                'name': s.name,
+                'use_count': s.use_count,
+                'scene': s.scene,
+                'scene_display': s.get_scene_display(),
+            })
+
+        completed_tasks = tasks_qs.filter(status='completed')
+        total_completed = completed_tasks.count()
+        total_missing = sum(t.missing_count for t in completed_tasks)
+        total_items = sum(t.check_items.count() for t in completed_tasks)
+        missing_rate = round(total_missing / total_items * 100, 1) if total_items > 0 else 0
+
+        total_replaced = sum(t.replace_count for t in completed_tasks)
+
+        scene_stats = completed_tasks.values('scene').annotate(
+            count=Count('id')
+        ).order_by('-count')[:5]
+
+        scene_display_map = dict(OutfitSet.SCENE_CHOICES)
+        frequent_scenes = []
+        for ss in scene_stats:
+            if ss['scene']:
+                frequent_scenes.append({
+                    'scene': ss['scene'],
+                    'scene_display': scene_display_map.get(ss['scene'], ss['scene']),
+                    'count': ss['count'],
+                })
+
+        return {
+            'recent_30d_use_count': recent_30d_use_count,
+            'most_used_sets': most_used_sets,
+            'missing_rate': missing_rate,
+            'total_missing': total_missing,
+            'replace_count': total_replaced,
+            'frequent_scenes': frequent_scenes,
+            'total_sets': sets_qs.count(),
+            'total_packing_tasks': total_completed,
         }
 
 
@@ -1428,3 +1495,281 @@ class CareRecordViewSet(viewsets.ModelViewSet):
         elif care_type == 'retrieve':
             item.care_status = 'in_use'
             item.save(update_fields=['care_status', 'updated_at'])
+
+
+class OutfitSetViewSet(viewsets.ModelViewSet):
+    queryset = OutfitSet.objects.all()
+    serializer_class = OutfitSetSerializer
+    filterset_fields = ['baby', 'scene', 'season']
+    search_fields = ['name', 'note']
+    ordering_fields = ['created_at', 'updated_at', 'use_count', 'name']
+
+    def get_serializer_class(self):
+        if self.action in ['create', 'update', 'partial_update']:
+            return OutfitSetCreateUpdateSerializer
+        return OutfitSetSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        baby_id = self.request.query_params.get('baby')
+        if baby_id:
+            queryset = queryset.filter(baby_id=baby_id)
+        scene = self.request.query_params.get('scene')
+        if scene:
+            queryset = queryset.filter(scene=scene)
+        season = self.request.query_params.get('season')
+        if season:
+            queryset = queryset.filter(season=season)
+        min_temp = self.request.query_params.get('min_temperature')
+        if min_temp:
+            queryset = queryset.filter(
+                Q(min_temperature__lte=min_temp) | Q(min_temperature__isnull=True)
+            )
+        max_temp = self.request.query_params.get('max_temperature')
+        if max_temp:
+            queryset = queryset.filter(
+                Q(max_temperature__gte=max_temp) | Q(max_temperature__isnull=True)
+            )
+        return queryset
+
+    @action(detail=False, methods=['get'], url_path='available-items')
+    def available_items(self, request):
+        baby_id = request.query_params.get('baby')
+        if not baby_id:
+            return Response({'error': '请指定baby参数'}, status=status.HTTP_400_BAD_REQUEST)
+        items = ClothingItem.objects.filter(
+            baby_id=baby_id,
+            status__in=['keep', 'to_give', 'reserved'],
+            care_status='stored',
+        )
+        serializer = ClothingItemSummarySerializer(items, many=True)
+        return Response({
+            'count': items.count(),
+            'items': serializer.data,
+        })
+
+    @action(detail=True, methods=['get'], url_path='check-availability')
+    def check_availability(self, request, pk=None):
+        outfit_set = self.get_object()
+        available = []
+        unavailable = []
+        for set_item in outfit_set.set_items.all():
+            item_data = OutfitSetItemSerializer(set_item).data
+            if set_item.is_available():
+                available.append(item_data)
+            else:
+                unavailable.append(item_data)
+        return Response({
+            'available_count': len(available),
+            'unavailable_count': len(unavailable),
+            'available_items': available,
+            'unavailable_items': unavailable,
+        })
+
+
+class PackingTaskViewSet(viewsets.ModelViewSet):
+    queryset = PackingTask.objects.all()
+    serializer_class = PackingTaskSerializer
+    filterset_fields = ['baby', 'set', 'status', 'scene']
+    search_fields = ['name', 'note']
+    ordering_fields = ['created_at', 'trip_date', 'packing_completed_at']
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return PackingTaskCreateSerializer
+        return PackingTaskSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        baby_id = self.request.query_params.get('baby')
+        if baby_id:
+            queryset = queryset.filter(baby_id=baby_id)
+        status = self.request.query_params.get('status')
+        if status:
+            queryset = queryset.filter(status=status)
+        return queryset
+
+    @action(detail=True, methods=['post'], url_path='complete')
+    def complete_task(self, request, pk=None):
+        task = self.get_object()
+        if task.status == 'completed':
+            return Response({'error': '任务已完成'}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = PackingTaskCompleteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        note = serializer.validated_data.get('note', '')
+        if note:
+            task.note = note
+
+        missing_count = task.check_items.filter(pack_status='missing').count()
+        replace_count = task.check_items.filter(pack_status='replaced').count()
+        task.missing_count = missing_count
+        task.replace_count = replace_count
+        task.complete()
+
+        return Response({
+            'message': '打包完成',
+            'task': PackingTaskSerializer(task).data,
+        })
+
+    @action(detail=True, methods=['post'], url_path='cancel')
+    def cancel_task(self, request, pk=None):
+        task = self.get_object()
+        if task.status == 'completed':
+            return Response({'error': '已完成的任务无法取消'}, status=status.HTTP_400_BAD_REQUEST)
+        task.status = 'cancelled'
+        task.save()
+        return Response({
+            'message': '任务已取消',
+            'task': PackingTaskSerializer(task).data,
+        })
+
+    @action(detail=True, methods=['post'], url_path='items/(?P<item_id>[^/.]+)/update')
+    def update_item(self, request, pk=None, item_id=None):
+        task = self.get_object()
+        try:
+            check_item = PackingCheckRecord.objects.get(id=item_id, task=task)
+        except PackingCheckRecord.DoesNotExist:
+            return Response({'error': '检查项不存在'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = PackingItemUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        pack_status = data['pack_status']
+        check_item.pack_status = pack_status
+
+        if pack_status == 'replaced' and data.get('replaced_item_id'):
+            try:
+                replaced_item = ClothingItem.objects.get(id=data['replaced_item_id'])
+                check_item.replaced_item = replaced_item
+            except ClothingItem.DoesNotExist:
+                return Response({'error': '替换衣物不存在'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if 'note' in data:
+            check_item.note = data['note']
+
+        check_item.save()
+
+        return Response({
+            'message': '更新成功',
+            'item': PackingCheckRecordSerializer(check_item).data,
+        })
+
+    @action(detail=True, methods=['post'], url_path='items/(?P<item_id>[^/.]+)/mark-packed')
+    def mark_item_packed(self, request, pk=None, item_id=None):
+        task = self.get_object()
+        try:
+            check_item = PackingCheckRecord.objects.get(id=item_id, task=task)
+        except PackingCheckRecord.DoesNotExist:
+            return Response({'error': '检查项不存在'}, status=status.HTTP_404_NOT_FOUND)
+        check_item.mark_packed()
+        return Response({
+            'message': '已标记为已打包',
+            'item': PackingCheckRecordSerializer(check_item).data,
+        })
+
+    @action(detail=True, methods=['post'], url_path='items/(?P<item_id>[^/.]+)/mark-missing')
+    def mark_item_missing(self, request, pk=None, item_id=None):
+        task = self.get_object()
+        try:
+            check_item = PackingCheckRecord.objects.get(id=item_id, task=task)
+        except PackingCheckRecord.DoesNotExist:
+            return Response({'error': '检查项不存在'}, status=status.HTTP_404_NOT_FOUND)
+        check_item.mark_missing()
+        return Response({
+            'message': '已标记为缺失',
+            'item': PackingCheckRecordSerializer(check_item).data,
+        })
+
+    @action(detail=True, methods=['get'], url_path='replace-suggestions')
+    def replace_suggestions(self, request, pk=None, item_id=None):
+        task = self.get_object()
+        item_id = request.query_params.get('item_id')
+        if not item_id:
+            return Response({'error': '请指定item_id参数'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            original_item = ClothingItem.objects.get(id=item_id)
+        except ClothingItem.DoesNotExist:
+            return Response({'error': '原衣物不存在'}, status=status.HTTP_404_NOT_FOUND)
+
+        suggestions = ClothingItem.objects.filter(
+            baby=task.baby,
+            category=original_item.category,
+            status__in=['keep', 'to_give', 'reserved'],
+            care_status='stored',
+        ).exclude(id=original_item.id)
+
+        used_in_task_ids = task.check_items.values_list('original_item_id', flat=True).distinct()
+        suggestions = suggestions.exclude(id__in=used_in_task_ids)
+
+        serializer = ClothingItemSummarySerializer(suggestions[:10], many=True)
+        return Response({
+            'count': suggestions.count(),
+            'items': serializer.data,
+        })
+
+    @action(detail=False, methods=['get'], url_path='statistics')
+    def get_statistics(self, request):
+        baby_id = request.query_params.get('baby')
+        tasks_qs = PackingTask.objects.all()
+        sets_qs = OutfitSet.objects.all()
+        if baby_id:
+            tasks_qs = tasks_qs.filter(baby_id=baby_id)
+            sets_qs = sets_qs.filter(baby_id=baby_id)
+
+        thirty_days_ago = date.today() - timedelta(days=30)
+
+        recent_30d_use_count = tasks_qs.filter(
+            status='completed',
+            packing_completed_at__gte=thirty_days_ago,
+        ).count()
+
+        most_used_sets_qs = sets_qs.filter(
+            use_count__gt=0
+        ).order_by('-use_count')[:5]
+
+        most_used_sets = []
+        for s in most_used_sets_qs:
+            most_used_sets.append({
+                'id': s.id,
+                'name': s.name,
+                'use_count': s.use_count,
+                'scene': s.scene,
+                'scene_display': s.get_scene_display(),
+            })
+
+        completed_tasks = tasks_qs.filter(status='completed')
+        total_completed = completed_tasks.count()
+        total_missing = sum(t.missing_count for t in completed_tasks)
+        total_items = sum(t.check_items.count() for t in completed_tasks)
+        missing_rate = round(total_missing / total_items * 100, 1) if total_items > 0 else 0
+
+        total_replaced = sum(t.replace_count for t in completed_tasks)
+
+        scene_stats = completed_tasks.values('scene').annotate(
+            count=Count('id')
+        ).order_by('-count')[:5]
+
+        scene_display_map = dict(OutfitSet.SCENE_CHOICES)
+        frequent_scenes = []
+        for ss in scene_stats:
+            if ss['scene']:
+                frequent_scenes.append({
+                    'scene': ss['scene'],
+                    'scene_display': scene_display_map.get(ss['scene'], ss['scene']),
+                    'count': ss['count'],
+                })
+
+        return Response({
+            'recent_30d_use_count': recent_30d_use_count,
+            'most_used_sets': most_used_sets,
+            'missing_rate': missing_rate,
+            'total_missing': total_missing,
+            'replace_count': total_replaced,
+            'frequent_scenes': frequent_scenes,
+            'total_sets': sets_qs.count(),
+            'total_packing_tasks': total_completed,
+        })

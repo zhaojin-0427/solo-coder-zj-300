@@ -13,6 +13,8 @@ router.register(r'borrow-objects', views.BorrowObjectViewSet)
 router.register(r'borrow-records', views.BorrowRecordViewSet, basename='borrowrecord')
 router.register(r'storage-locations', views.StorageLocationViewSet)
 router.register(r'care-records', views.CareRecordViewSet)
+router.register(r'outfit-sets', views.OutfitSetViewSet, basename='outfitset')
+router.register(r'packing-tasks', views.PackingTaskViewSet, basename='packingtask')
 
 urlpatterns = [
     path('', include(router.urls)),

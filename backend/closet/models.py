@@ -498,3 +498,169 @@ class CareRecord(models.Model):
 
     def __str__(self):
         return f'{self.item.name} - {self.get_care_type_display()} ({self.care_date})'
+
+
+class OutfitSet(models.Model):
+    SCENE_CHOICES = [
+        ('daily_outing', '日常外出'),
+        ('kindergarten', '幼儿园备用'),
+        ('travel', '旅行过夜'),
+        ('photo', '拍照穿搭'),
+        ('emergency_cold', '降温应急包'),
+        ('other', '其他'),
+    ]
+
+    SEASON_CHOICES = ClothingItem.SEASON_CHOICES
+
+    baby = models.ForeignKey(Baby, on_delete=models.CASCADE, related_name='outfit_sets', verbose_name='所属宝宝')
+    name = models.CharField('套装名称', max_length=200)
+    scene = models.CharField('适用场景', max_length=20, choices=SCENE_CHOICES)
+    season = models.CharField('适用季节', max_length=10, choices=SEASON_CHOICES, default='all')
+    min_temperature = models.IntegerField('适用最低温度(℃)', blank=True, null=True)
+    max_temperature = models.IntegerField('适用最高温度(℃)', blank=True, null=True)
+    backup_count = models.IntegerField('备用数量', default=1, validators=[MinValueValidator(0)])
+    use_count = models.IntegerField('使用次数', default=0, validators=[MinValueValidator(0)])
+    last_used_at = models.DateTimeField('最近使用时间', blank=True, null=True)
+    note = models.TextField('备注', blank=True, null=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'outfit_set'
+        ordering = ['-updated_at', '-created_at']
+        verbose_name = '衣物套装'
+        verbose_name_plural = verbose_name
+
+    def __str__(self):
+        return self.name
+
+    def item_count(self):
+        return self.set_items.count()
+
+    def is_item_available(self, item):
+        if item.status in ['lent', 'given']:
+            return False
+        if item.care_status in ['to_wash', 'washing', 'to_sterilize', 'sterilizing', 'to_store']:
+            return False
+        return True
+
+    def get_unavailable_items(self):
+        unavailable = []
+        for set_item in self.set_items.all():
+            if set_item.item and not self.is_item_available(set_item.item):
+                unavailable.append(set_item)
+        return unavailable
+
+
+class OutfitSetItem(models.Model):
+    ITEM_TYPE_CHOICES = [
+        ('must', '必带'),
+        ('optional', '可选'),
+    ]
+
+    set = models.ForeignKey(OutfitSet, on_delete=models.CASCADE, related_name='set_items', verbose_name='所属套装')
+    item = models.ForeignKey(ClothingItem, on_delete=models.CASCADE, related_name='set_items', verbose_name='衣物')
+    item_type = models.CharField('物品类型', max_length=10, choices=ITEM_TYPE_CHOICES, default='must')
+    quantity = models.IntegerField('数量', default=1, validators=[MinValueValidator(1)])
+    sort_order = models.IntegerField('排序权重', default=0)
+    note = models.TextField('备注', blank=True, null=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'outfit_set_item'
+        ordering = ['sort_order', '-created_at']
+        verbose_name = '套装明细'
+        verbose_name_plural = verbose_name
+
+    def __str__(self):
+        return f'{self.set.name} - {self.item.name}'
+
+    def is_available(self):
+        return self.set.is_item_available(self.item)
+
+
+class PackingTask(models.Model):
+    STATUS_CHOICES = [
+        ('draft', '待打包'),
+        ('packing', '打包中'),
+        ('completed', '已完成'),
+        ('cancelled', '已取消'),
+    ]
+
+    set = models.ForeignKey(OutfitSet, on_delete=models.SET_NULL, null=True, blank=True, related_name='packing_tasks', verbose_name='关联套装')
+    baby = models.ForeignKey(Baby, on_delete=models.CASCADE, related_name='packing_tasks', verbose_name='所属宝宝')
+    name = models.CharField('任务名称', max_length=200)
+    scene = models.CharField('出行场景', max_length=20, choices=OutfitSet.SCENE_CHOICES, blank=True, null=True)
+    trip_date = models.DateField('出行日期', blank=True, null=True)
+    packing_completed_at = models.DateTimeField('打包完成时间', blank=True, null=True)
+    status = models.CharField('任务状态', max_length=15, choices=STATUS_CHOICES, default='draft')
+    missing_count = models.IntegerField('缺失物品数', default=0)
+    replace_count = models.IntegerField('替换物品数', default=0)
+    note = models.TextField('备注', blank=True, null=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'packing_task'
+        ordering = ['-created_at']
+        verbose_name = '打包任务'
+        verbose_name_plural = verbose_name
+
+    def __str__(self):
+        return self.name
+
+    def complete(self):
+        from django.utils import timezone
+        self.status = 'completed'
+        self.packing_completed_at = timezone.now()
+        self.save()
+        if self.set:
+            self.set.use_count = models.F('use_count') + 1
+            self.set.last_used_at = timezone.now()
+            self.set.save(update_fields=['use_count', 'last_used_at', 'updated_at'])
+
+
+class PackingCheckRecord(models.Model):
+    STATUS_CHOICES = [
+        ('pending', '待确认'),
+        ('packed', '已打包'),
+        ('replaced', '已替换'),
+        ('missing', '缺失'),
+    ]
+
+    task = models.ForeignKey(PackingTask, on_delete=models.CASCADE, related_name='check_items', verbose_name='所属打包任务')
+    set_item = models.ForeignKey(OutfitSetItem, on_delete=models.SET_NULL, null=True, blank=True, related_name='check_records', verbose_name='套装明细')
+    original_item = models.ForeignKey(ClothingItem, on_delete=models.SET_NULL, null=True, blank=True, related_name='+', verbose_name='原衣物')
+    replaced_item = models.ForeignKey(ClothingItem, on_delete=models.SET_NULL, null=True, blank=True, related_name='+', verbose_name='替换衣物')
+    item_name = models.CharField('物品名称', max_length=200)
+    item_category = models.CharField('物品品类', max_length=30, blank=True)
+    item_type = models.CharField('物品类型', max_length=10, choices=OutfitSetItem.ITEM_TYPE_CHOICES, default='must')
+    pack_status = models.CharField('打包状态', max_length=10, choices=STATUS_CHOICES, default='pending')
+    original_available = models.BooleanField('原物是否可用', default=True)
+    sort_order = models.IntegerField('排序权重', default=0)
+    note = models.TextField('备注', blank=True, null=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'packing_check_record'
+        ordering = ['sort_order', '-created_at']
+        verbose_name = '打包检查记录'
+        verbose_name_plural = verbose_name
+
+    def __str__(self):
+        return f'{self.task.name} - {self.item_name}'
+
+    def mark_packed(self):
+        self.pack_status = 'packed'
+        self.save()
+
+    def mark_replaced(self, replaced_item):
+        self.replaced_item = replaced_item
+        self.pack_status = 'replaced'
+        self.save()
+
+    def mark_missing(self):
+        self.pack_status = 'missing'
+        self.save()

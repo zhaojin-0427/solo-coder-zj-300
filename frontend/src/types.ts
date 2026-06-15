@@ -397,6 +397,140 @@ export interface CareStatistics {
   wash_method_distribution: Record<string, number>
 }
 
+export type OutfitScene =
+  | 'daily_outing'
+  | 'kindergarten'
+  | 'travel'
+  | 'photo'
+  | 'emergency_cold'
+  | 'other'
+
+export type ItemType = 'must' | 'optional'
+
+export type PackingStatus = 'pending' | 'packed' | 'replaced' | 'missing'
+
+export type PackingTaskStatus = 'draft' | 'packing' | 'completed' | 'cancelled'
+
+export interface OutfitSetItem {
+  id: number
+  set: number
+  item: number
+  item_type: ItemType
+  item_type_display?: string
+  quantity: number
+  sort_order: number
+  note?: string
+  is_available?: boolean
+  unavailable_reason?: string | null
+  item_info?: ClothingItem | null
+  created_at?: string
+  updated_at?: string
+}
+
+export interface OutfitSet {
+  id: number
+  baby: number
+  baby_name?: string
+  name: string
+  scene: OutfitScene
+  scene_display?: string
+  season: string
+  season_display?: string
+  min_temperature?: number | null
+  max_temperature?: number | null
+  backup_count: number
+  use_count?: number
+  last_used_at?: string | null
+  note?: string
+  set_items?: OutfitSetItem[]
+  item_count?: number
+  available_count?: number
+  unavailable_count?: number
+  created_at?: string
+  updated_at?: string
+}
+
+export interface PackingCheckRecord {
+  id: number
+  task: number
+  set_item?: number | null
+  original_item?: number | null
+  replaced_item?: number | null
+  item_name: string
+  item_category: string
+  item_type: ItemType
+  item_type_display?: string
+  pack_status: PackingStatus
+  pack_status_display?: string
+  original_available: boolean
+  sort_order: number
+  note?: string
+  original_item_info?: ClothingItem | null
+  replaced_item_info?: ClothingItem | null
+  created_at?: string
+  updated_at?: string
+}
+
+export interface PackingTaskStats {
+  total: number
+  packed: number
+  replaced: number
+  missing: number
+  pending: number
+  must_total: number
+  must_packed: number
+  progress: number
+}
+
+export interface PackingTask {
+  id: number
+  set?: number | null
+  set_info?: OutfitSet | null
+  baby: number
+  baby_name?: string
+  name: string
+  scene?: OutfitScene | null
+  scene_display?: string | null
+  trip_date?: string | null
+  packing_completed_at?: string | null
+  status: PackingTaskStatus
+  status_display?: string
+  missing_count?: number
+  replace_count?: number
+  note?: string
+  check_items?: PackingCheckRecord[]
+  grouped_items?: {
+    must: PackingCheckRecord[]
+    optional: PackingCheckRecord[]
+    need_replace: PackingCheckRecord[]
+    missing: PackingCheckRecord[]
+  }
+  stats?: PackingTaskStats
+  created_at?: string
+  updated_at?: string
+}
+
+export interface OutfitSetStatistics {
+  recent_30d_use_count: number
+  most_used_sets: Array<{
+    id: number
+    name: string
+    use_count: number
+    scene: OutfitScene
+    scene_display: string
+  }>
+  missing_rate: number
+  total_missing: number
+  replace_count: number
+  frequent_scenes: Array<{
+    scene: OutfitScene
+    scene_display: string
+    count: number
+  }>
+  total_sets: number
+  total_packing_tasks: number
+}
+
 export interface Statistics {
   overview: {
     total_items: number
@@ -431,4 +565,5 @@ export interface Statistics {
   season_plan_stats?: SeasonPlanStatistics
   borrow_stats?: BorrowStatistics
   care_stats?: CareStatistics
+  outfit_set_stats?: OutfitSetStatistics
 }
