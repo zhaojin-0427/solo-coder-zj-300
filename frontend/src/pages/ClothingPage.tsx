@@ -3,12 +3,12 @@ import BabySelector from '../components/BabySelector'
 import { useBaby } from '../App'
 import {
   Button, Table, Tag, Modal, Form, Input, Select, InputNumber,
-  DatePicker, Space, Popconfirm, App as AntdApp, Card, Row, Col, Image
+  DatePicker, Space, Popconfirm, App as AntdApp, Card, Row, Col, Image, Tooltip
 } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined, GiftOutlined } from '@ant-design/icons'
 import {
   api, categoryOptions, seasonOptions, conditionOptions,
-  statusOptions, sizeTypeOptions
+  statusOptions, statusOptionsWithLent, sizeTypeOptions, borrowStatusOptions,
 } from '../api'
 import type { ClothingItem } from '../types'
 import dayjs from 'dayjs'
@@ -18,6 +18,7 @@ const statusColorMap: Record<string, string> = {
   to_give: 'orange',
   reserved: 'purple',
   given: 'green',
+  lent: 'cyan',
 }
 
 const fitTagMap: Record<string, { label: string; cls: string }> = {
@@ -116,6 +117,10 @@ export default function ClothingPage() {
   }
 
   const markToGive = async (item: ClothingItem) => {
+    if (item.status === 'lent') {
+      antdApp.message.warning('该衣物处于借出中状态，无法执行转送操作，请先归还')
+      return
+    }
     try {
       await api.updateClothingItem(item.id, { status: 'to_give' })
       antdApp.message.success('已标记为待转送')
@@ -187,9 +192,19 @@ export default function ClothingPage() {
     {
       title: '状态',
       dataIndex: 'status',
-      width: 100,
+      width: 140,
       render: (v: string, r: ClothingItem) => (
-        <Tag color={statusColorMap[v] || 'default'}>{r.status_display}</Tag>
+        <div>
+          <Tag color={statusColorMap[v] || 'default'}>{r.status_display}</Tag>
+          {r.status === 'lent' && r.current_borrow && (
+            <div style={{ marginTop: 4, fontSize: 11, color: '#888' }}>
+              借予：{r.current_borrow.borrower_name}
+              {r.current_borrow.expected_return_date && (
+                <div>预计归还：{r.current_borrow.expected_return_date}</div>
+              )}
+            </div>
+          )}
+        </div>
       ),
     },
     {
@@ -208,6 +223,11 @@ export default function ClothingPage() {
           {r.status === 'keep' && (
             <Button type="link" size="small" icon={<GiftOutlined />} onClick={() => markToGive(r)}>转送</Button>
           )}
+          {r.status === 'lent' && (
+            <Tooltip title="借出中衣物暂不可转送">
+              <Button type="link" size="small" icon={<GiftOutlined />} disabled>转送</Button>
+            </Tooltip>
+          )}
           <Popconfirm title="确定删除？" onConfirm={() => handleDelete(r.id)} okText="删除" cancelText="取消">
             <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
           </Popconfirm>
@@ -222,13 +242,21 @@ export default function ClothingPage() {
       description="为每件衣物建档，记录品类、尺码、季节、成色、品牌、购入时间和适合月龄，追踪物品流转状态。"
     >
       <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
-        <Col span={6}>
+        <Col xs={12} sm={6}>
           <Card size="small">
             <div style={{ color: '#888', fontSize: 12 }}>物品总数</div>
             <div style={{ fontSize: 24, fontWeight: 700, color: '#c2185b' }}>{items.length}</div>
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} sm={6}>
+          <Card size="small">
+            <div style={{ color: '#888', fontSize: 12 }}>借出中</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: '#13c2c2' }}>
+              {items.filter(i => i.status === 'lent').length}
+            </div>
+          </Card>
+        </Col>
+        <Col xs={12} sm={6}>
           <Card size="small">
             <div style={{ color: '#888', fontSize: 12 }}>待转送</div>
             <div style={{ fontSize: 24, fontWeight: 700, color: '#d46b08' }}>
@@ -236,15 +264,7 @@ export default function ClothingPage() {
             </div>
           </Card>
         </Col>
-        <Col span={6}>
-          <Card size="small">
-            <div style={{ color: '#888', fontSize: 12 }}>不合身/即将不合身</div>
-            <div style={{ fontSize: 24, fontWeight: 700, color: '#cf1322' }}>
-              {items.filter(i => ['too_small', 'near_limit'].includes(i.fit_status || '')).length}
-            </div>
-          </Card>
-        </Col>
-        <Col span={6}>
+        <Col xs={12} sm={6}>
           <Card size="small">
             <div style={{ color: '#888', fontSize: 12 }}>已送出</div>
             <div style={{ fontSize: 24, fontWeight: 700, color: '#389e0d' }}>
@@ -267,7 +287,7 @@ export default function ClothingPage() {
           placeholder="筛选状态"
           allowClear
           style={{ width: 140 }}
-          options={statusOptions}
+          options={statusOptionsWithLent}
           value={filters.status || undefined}
           onChange={(v) => setFilters({ ...filters, status: v })}
         />
@@ -377,8 +397,16 @@ export default function ClothingPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="status" label="当前状态" rules={[{ required: true }]}>
-                <Select options={statusOptions} />
+              <Form.Item
+                name="status"
+                label="当前状态"
+                rules={[{ required: true }]}
+                extra={editingItem?.status === 'lent' ? '⚠️ 借出中衣物请在借穿管理页操作归还' : ''}
+              >
+                <Select
+                  options={statusOptionsWithLent}
+                  disabled={editingItem?.status === 'lent'}
+                />
               </Form.Item>
             </Col>
           </Row>

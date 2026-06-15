@@ -41,6 +41,7 @@ const categoryColor: Record<PlanItemCategory, string> = {
   near_unsuitable: 'orange',
   suggest_transfer: 'red',
   next_season_prep: 'purple',
+  lent: 'cyan',
 }
 
 const categoryIcon: Record<PlanItemCategory, JSX.Element> = {
@@ -48,6 +49,7 @@ const categoryIcon: Record<PlanItemCategory, JSX.Element> = {
   near_unsuitable: <ThunderboltOutlined />,
   suggest_transfer: <GiftOutlined />,
   next_season_prep: <ShoppingCartOutlined />,
+  lent: <SwapOutlined />,
 }
 
 const actionColor: Record<ItemStatusAction, string> = {
@@ -229,6 +231,13 @@ export default function SeasonPlanPage() {
       antdApp.message.warning('请先选择要操作的物品')
       return
     }
+    const lentItems = (currentPlan.plan_items || []).filter(
+      (item) => selectedRowKeys.includes(item.id) && item.effective_category === 'lent'
+    )
+    if (lentItems.length > 0 && ['to_give', 'reserved'].includes(action)) {
+      antdApp.message.warning(`有 ${lentItems.length} 件衣物处于借出中状态，无法执行转送批量操作`)
+      return
+    }
     try {
       await api.batchActionSeasonPlan(currentPlan.id, selectedRowKeys, action)
       antdApp.message.success(
@@ -243,6 +252,13 @@ export default function SeasonPlanPage() {
   const handleChangeCategory = async (category: PlanItemCategory) => {
     if (!currentPlan || selectedRowKeys.length === 0) {
       antdApp.message.warning('请先选择要调整分类的物品')
+      return
+    }
+    const lentItems = (currentPlan.plan_items || []).filter(
+      (item) => selectedRowKeys.includes(item.id) && item.effective_category === 'lent'
+    )
+    if (lentItems.length > 0) {
+      antdApp.message.warning('借出中衣物的分类由借穿状态自动管理，无法手动调整')
       return
     }
     try {
@@ -360,6 +376,7 @@ export default function SeasonPlanPage() {
       near_unsuitable: [],
       suggest_transfer: [],
       next_season_prep: [],
+      lent: [],
     }
     items.forEach((item) => {
       result[item.effective_category].push(item)
@@ -376,10 +393,21 @@ export default function SeasonPlanPage() {
       dataIndex: 'item_name',
       render: (v: string, r: SeasonPlanItem) => (
         <div>
-          <div style={{ fontWeight: 500 }}>{v}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+            <div style={{ fontWeight: 500 }}>{v}</div>
+            {r.effective_category === 'lent' && (
+              <Tag color="cyan" style={{ fontSize: 10, padding: '0 4px', margin: 0 }}>暂不可整理</Tag>
+            )}
+          </div>
           <div style={{ color: '#888', fontSize: 12 }}>
             {r.item_size_label} · {categoryOptions.find(c => c.value === r.item_category)?.label || r.item_category}
           </div>
+          {r.effective_category === 'lent' && r.item_current_borrow && (
+            <div style={{ marginTop: 4, fontSize: 11, color: '#fa8c16' }}>
+              👤 借予 {r.item_current_borrow.borrower_name}
+              {r.item_current_borrow.expected_return_date && ` · 预计 ${r.item_current_borrow.expected_return_date} 归还`}
+            </div>
+          )}
         </div>
       ),
     },
@@ -480,6 +508,15 @@ export default function SeasonPlanPage() {
         <span>
           <ShoppingCartOutlined /> 下一季待准备
           <Tag style={{ marginLeft: 8 }} color="purple">{itemsByCategory.next_season_prep.length}</Tag>
+        </span>
+      ),
+    },
+    {
+      key: 'lent',
+      label: (
+        <span>
+          <SwapOutlined /> 借出中（暂不可整理）
+          <Tag style={{ marginLeft: 8 }} color="cyan">{itemsByCategory.lent.length}</Tag>
         </span>
       ),
     },
@@ -659,8 +696,8 @@ export default function SeasonPlanPage() {
               </Col>
               <Col xs={12} sm={6}>
                 <Card size="small" className="stat-card">
-                  <div style={{ color: '#888', fontSize: 12 }}>下一季待准备</div>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: '#722ed1' }}>{stats.next_season_prep}</div>
+                  <div style={{ color: '#888', fontSize: 12 }}>借出中</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: '#13c2c2' }}>{stats.lent || 0}</div>
                 </Card>
               </Col>
             </Row>
@@ -678,6 +715,11 @@ export default function SeasonPlanPage() {
                     })()}
                     status={currentPlan.status === 'completed' ? 'success' : 'active'}
                   />
+                  {(stats.lent || 0) > 0 && (
+                    <div style={{ marginTop: 4, color: '#13c2c2', fontSize: 12 }}>
+                      💡 另有 {stats.lent} 件借出中衣物暂不纳入整理
+                    </div>
+                  )}
                   <div style={{ marginTop: 8, color: '#666', fontSize: 13, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                     <span>📌 已标记待转送：{stats.action_to_give} 件</span>
                     <span>✅ 已预定：{stats.action_reserved} 件</span>

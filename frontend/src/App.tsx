@@ -8,6 +8,7 @@ import {
   RiseOutlined,
   BarChartOutlined,
   CalendarOutlined,
+  ShareAltOutlined,
 } from '@ant-design/icons'
 import type { Baby } from './types'
 import { api } from './api'
@@ -17,6 +18,7 @@ import TransferPage from './pages/TransferPage'
 import GrowthFitPage from './pages/GrowthFitPage'
 import StatisticsPage from './pages/StatisticsPage'
 import SeasonPlanPage from './pages/SeasonPlanPage'
+import BorrowPage from './pages/BorrowPage'
 
 const { Sider, Content, Header } = Layout
 
@@ -63,6 +65,7 @@ export default function App() {
     { key: '/clothing', icon: <HddOutlined />, label: '物品档案' },
     { key: '/size-tracking', icon: <ArrowsAltOutlined />, label: '尺码追踪' },
     { key: '/season-plan', icon: <CalendarOutlined />, label: '换季计划' },
+    { key: '/borrow', icon: <ShareAltOutlined />, label: '借穿管理' },
     { key: '/transfer', icon: <GiftOutlined />, label: '转送记录' },
     { key: '/growth-fit', icon: <RiseOutlined />, label: '成长适配' },
     { key: '/statistics', icon: <BarChartOutlined />, label: '统计' },
@@ -93,6 +96,7 @@ export default function App() {
               <Route path="/clothing" element={<ClothingPage />} />
               <Route path="/size-tracking" element={<SizeTrackingPage />} />
               <Route path="/season-plan" element={<SeasonPlanPage />} />
+              <Route path="/borrow" element={<BorrowPage />} />
               <Route path="/transfer" element={<TransferPage />} />
               <Route path="/growth-fit" element={<GrowthFitPage />} />
               <Route path="/statistics" element={<StatisticsPage />} />

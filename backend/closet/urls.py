@@ -9,6 +9,8 @@ router.register(r'clothing-items', views.ClothingItemViewSet)
 router.register(r'transfer-recipients', views.TransferRecipientViewSet)
 router.register(r'transfer-records', views.TransferRecordViewSet)
 router.register(r'season-plans', views.SeasonPlanViewSet, basename='seasonplan')
+router.register(r'borrow-objects', views.BorrowObjectViewSet)
+router.register(r'borrow-records', views.BorrowRecordViewSet, basename='borrowrecord')
 
 urlpatterns = [
     path('', include(router.urls)),

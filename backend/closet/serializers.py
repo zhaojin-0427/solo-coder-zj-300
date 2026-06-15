@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from .models import Baby, GrowthRecord, ClothingItem, TransferRecipient, TransferRecord, SeasonPlan, SeasonPlanItem
+from .models import Baby, GrowthRecord, ClothingItem, TransferRecipient, TransferRecord, SeasonPlan, SeasonPlanItem, BorrowObject, BorrowRecord
+from datetime import date
 
 HEIGHT_BASED_CATEGORIES = {
     'onesie', 'tshirt', 'shirt', 'pants', 'shorts', 'dress', 'skirt',
@@ -89,6 +90,8 @@ class ClothingItemSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     size_type_display = serializers.CharField(source='get_size_type_display', read_only=True)
     fit_status = serializers.SerializerMethodField()
+    current_borrow = serializers.SerializerMethodField()
+    is_borrowed = serializers.SerializerMethodField()
 
     class Meta:
         model = ClothingItem
@@ -103,6 +106,17 @@ class ClothingItemSerializer(serializers.ModelSerializer):
         current_height = latest_growth.height if latest_growth else None
         fit_status, _ = calculate_fit(obj, baby, current_height)
         return fit_status
+
+    def get_is_borrowed(self, obj):
+        return obj.status == 'lent'
+
+    def get_current_borrow(self, obj):
+        if obj.status != 'lent':
+            return None
+        current_borrow = obj.borrow_records.filter(status__in=['borrowed', 'overdue']).order_by('-created_at').first()
+        if current_borrow:
+            return BorrowRecordSummarySerializer(current_borrow).data
+        return None
 
 
 class TransferRecipientSerializer(serializers.ModelSerializer):
@@ -245,12 +259,23 @@ def generate_auto_classified_items(baby, target_season):
         status__in=['keep', 'to_give', 'reserved']
     )
 
+    lent_items = ClothingItem.objects.filter(
+        baby=baby,
+        status='lent'
+    )
+
     classified = []
     for item in items:
         category = auto_classify_item(item, baby, target_season, current_height, age_months)
         classified.append({
             'item': item,
             'auto_category': category,
+        })
+
+    for item in lent_items:
+        classified.append({
+            'item': item,
+            'auto_category': 'lent',
         })
     return classified
 
@@ -261,6 +286,7 @@ class SeasonPlanItemSerializer(serializers.ModelSerializer):
     auto_category_display = serializers.CharField(source='get_auto_category_display', read_only=True)
     item_status_action_display = serializers.SerializerMethodField()
     item_info = serializers.SerializerMethodField()
+    item_current_borrow = serializers.SerializerMethodField()
 
     class Meta:
         model = SeasonPlanItem
@@ -287,6 +313,16 @@ class SeasonPlanItemSerializer(serializers.ModelSerializer):
             return ClothingItemSerializer(obj.item).data
         return None
 
+    def get_item_current_borrow(self, obj):
+        if obj.item and hasattr(obj.item, 'is_borrowed') and obj.item.is_borrowed:
+            current_borrow = BorrowRecord.objects.filter(
+                item=obj.item,
+                status__in=['borrowed', 'overdue']
+            ).first()
+            if current_borrow:
+                return BorrowRecordSummarySerializer(current_borrow).data
+        return None
+
 
 class SeasonPlanSerializer(serializers.ModelSerializer):
     baby_name = serializers.CharField(source='baby.name', read_only=True)
@@ -307,6 +343,7 @@ class SeasonPlanSerializer(serializers.ModelSerializer):
             'near_unsuitable': 0,
             'suggest_transfer': 0,
             'next_season_prep': 0,
+            'lent': 0,
             'action_to_give': 0,
             'action_reserved': 0,
             'action_keep': 0,
@@ -361,3 +398,126 @@ class SeasonPlanBatchActionSerializer(serializers.Serializer):
 class SeasonPlanChangeCategorySerializer(serializers.Serializer):
     item_ids = serializers.ListField(child=serializers.IntegerField())
     category = serializers.ChoiceField(choices=SeasonPlanItem.CATEGORY_CHOICES)
+
+
+class BorrowObjectSerializer(serializers.ModelSerializer):
+    relation_display = serializers.CharField(source='get_relation_display', read_only=True)
+    baby_gender_display = serializers.CharField(source='get_baby_gender_display', read_only=True)
+    borrow_count = serializers.SerializerMethodField()
+    current_borrow_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BorrowObject
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at')
+
+    def get_borrow_count(self, obj):
+        return obj.borrow_records.count()
+
+    def get_current_borrow_count(self, obj):
+        return obj.borrow_records.filter(status__in=['borrowed', 'overdue']).count()
+
+
+class BorrowRecordSummarySerializer(serializers.ModelSerializer):
+    borrower_info = serializers.SerializerMethodField()
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    original_condition_display = serializers.CharField(source='get_original_condition_display', read_only=True)
+    return_condition_display = serializers.CharField(source='get_return_condition_display', read_only=True)
+    condition_change_display = serializers.CharField(source='get_condition_change_display', read_only=True)
+    wash_status_display = serializers.CharField(source='get_wash_status_display', read_only=True)
+    item_name = serializers.CharField(source='item.name', read_only=True)
+    item_category = serializers.CharField(source='item.category', read_only=True)
+    item_size_label = serializers.CharField(source='item.size_label', read_only=True)
+    is_overdue = serializers.SerializerMethodField()
+    days_borrowed = serializers.SerializerMethodField()
+    days_overdue = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BorrowRecord
+        fields = [
+            'id', 'item', 'item_name', 'item_category', 'item_size_label',
+            'borrower', 'borrower_name', 'baby_name', 'borrower_info',
+            'borrow_date', 'expected_return_date', 'actual_return_date',
+            'status', 'status_display', 'original_condition', 'original_condition_display',
+            'return_condition', 'return_condition_display', 'condition_change', 'condition_change_display',
+            'wash_status', 'wash_status_display', 'note', 'return_note',
+            'suggest_transfer', 'is_overdue', 'days_borrowed', 'days_overdue',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ('created_at', 'updated_at')
+
+    def get_borrower_info(self, obj):
+        if obj.borrower:
+            return BorrowObjectSerializer(obj.borrower).data
+        return {'name': obj.borrower_name, 'baby_name': obj.baby_name}
+
+    def get_is_overdue(self, obj):
+        return obj.is_overdue()
+
+    def get_days_borrowed(self, obj):
+        if not obj.borrow_date:
+            return 0
+        end_date = obj.actual_return_date or date.today()
+        return (end_date - obj.borrow_date).days
+
+    def get_days_overdue(self, obj):
+        if not obj.is_overdue() or not obj.expected_return_date:
+            return 0
+        return (date.today() - obj.expected_return_date).days
+
+
+class BorrowRecordSerializer(BorrowRecordSummarySerializer):
+    def _sync_item_status(self, instance, old_status=None):
+        item = instance.item
+        new_status = instance.status
+        if not item:
+            return
+
+        if old_status is None:
+            if new_status in ['borrowed', 'overdue']:
+                if item.status != 'lent':
+                    item.status = 'lent'
+                    item.save(update_fields=['status', 'updated_at'])
+            return
+
+        if old_status != new_status:
+            if new_status in ['borrowed', 'overdue']:
+                if item.status != 'lent':
+                    item.status = 'lent'
+                    item.save(update_fields=['status', 'updated_at'])
+            elif new_status in ['returned', 'returned_damaged']:
+                if item.status == 'lent':
+                    if instance.suggest_transfer:
+                        item.status = 'to_give'
+                    else:
+                        item.status = 'keep'
+                    if instance.return_condition and instance.return_condition != instance.original_condition:
+                        item.condition = instance.return_condition
+                    item.save(update_fields=['status', 'condition', 'updated_at'])
+
+    def create(self, validated_data):
+        instance = super().create(validated_data)
+        self._sync_item_status(instance)
+        instance.update_overdue_status()
+        return instance
+
+    def update(self, instance, validated_data):
+        old_status = instance.status
+        instance = super().update(instance, validated_data)
+        self._sync_item_status(instance, old_status=old_status)
+        instance.update_overdue_status()
+        return instance
+
+
+class BorrowReturnSerializer(serializers.Serializer):
+    actual_return_date = serializers.DateField(required=False)
+    return_condition = serializers.ChoiceField(choices=ClothingItem.CONDITION_CHOICES)
+    condition_change = serializers.ChoiceField(choices=BorrowRecord.CONDITION_CHANGE_CHOICES)
+    wash_status = serializers.ChoiceField(choices=BorrowRecord.WASH_STATUS_CHOICES)
+    return_note = serializers.CharField(required=False, allow_blank=True)
+    suggest_transfer = serializers.BooleanField(default=False)
+    status = serializers.ChoiceField(choices=[('returned', '已归还'), ('returned_damaged', '归还有损坏')], default='returned')
+
+
+class BorrowStatisticsSerializer(serializers.Serializer):
+    pass

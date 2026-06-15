@@ -41,6 +41,10 @@ export default function GrowthFitPage() {
   }
 
   const handleMarkGive = async (item: ClothingItem) => {
+    if (item.status === 'lent') {
+      antdApp.message.warning('该衣物处于借出中状态，无法执行转送操作')
+      return
+    }
     try {
       await api.updateClothingItem(item.id, { status: 'to_give' })
       antdApp.message.success('已标记为待转送')
@@ -68,13 +72,24 @@ export default function GrowthFitPage() {
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 4 }}>{item.name}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <div style={{ fontWeight: 600 }}>{item.name}</div>
+                    {item.status === 'lent' && (
+                      <Tag color="cyan" style={{ fontSize: 10, padding: '0 4px', margin: 0 }}>暂不可整理</Tag>
+                    )}
+                  </div>
                   <Space size={4}>
                     <Tag color="blue" style={{ fontSize: 11 }}>{item.size_label}</Tag>
                     <Tag style={{ fontSize: 11 }}>{item.category_display}</Tag>
                   </Space>
                   {(item.fit_reason || type !== 'fits') && (
                     <div className="fit-reason">{item.fit_reason || '宝宝穿着还偏大'}</div>
+                  )}
+                  {item.status === 'lent' && item.current_borrow && (
+                    <div style={{ marginTop: 6, fontSize: 11, color: '#fa8c16' }}>
+                      👤 借予 {item.current_borrow.borrower_name}
+                      {item.current_borrow.expected_return_date && ` · 预计 ${item.current_borrow.expected_return_date} 归还`}
+                    </div>
                   )}
                 </div>
               </div>
@@ -87,7 +102,8 @@ export default function GrowthFitPage() {
                   color={
                     item.status === 'keep' ? 'default' :
                     item.status === 'to_give' ? 'orange' :
-                    item.status === 'reserved' ? 'purple' : 'green'
+                    item.status === 'reserved' ? 'purple' :
+                    item.status === 'lent' ? 'cyan' : 'green'
                   }
                   style={{ margin: 0 }}
                 >
@@ -118,6 +134,7 @@ export default function GrowthFitPage() {
   const nearLimitPct = summary && summary.total > 0 ? Math.round((summary.near_limit / summary.total) * 100) : 0
   const fitsPct = summary && summary.total > 0 ? Math.round((summary.fits / summary.total) * 100) : 0
   const tooBigPct = summary && summary.total > 0 ? Math.round((summary.too_big / summary.total) * 100) : 0
+  const lentCount = summary?.lent || 0
 
   return (
     <BabySelector
@@ -209,6 +226,17 @@ export default function GrowthFitPage() {
                   </div>
                   <Progress percent={tooBigPct} showInfo={false} strokeColor="#0958d9" size="small" />
                 </div>
+                {lentCount > 0 && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+                      <span><Tag color="cyan">借出中</Tag></span>
+                      <span style={{ color: '#888' }}>{lentCount}件（暂不可整理）</span>
+                    </div>
+                    <div style={{ height: 8, background: '#e6fffb', borderRadius: 4 }}>
+                      <div style={{ height: '100%', width: `${(lentCount / (summary?.total || 1)) * 100}%`, background: '#13c2c2', borderRadius: 4 }} />
+                    </div>
+                  </div>
+                )}
               </Space>
             </Card>
           </Col>

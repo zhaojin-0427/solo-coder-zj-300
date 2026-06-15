@@ -98,6 +98,7 @@ class ClothingItem(models.Model):
         ('to_give', '待转送'),
         ('reserved', '已预定'),
         ('given', '已送出'),
+        ('lent', '借出中'),
     ]
 
     baby = models.ForeignKey(Baby, on_delete=models.CASCADE, related_name='clothes', verbose_name='所属宝宝')
@@ -218,6 +219,7 @@ class SeasonPlanItem(models.Model):
         ('near_unsuitable', '即将不合身'),
         ('suggest_transfer', '建议转送'),
         ('next_season_prep', '下一季待准备'),
+        ('lent', '暂不可整理(借出中)'),
     ]
 
     plan = models.ForeignKey(SeasonPlan, on_delete=models.CASCADE, related_name='plan_items', verbose_name='所属计划')
@@ -269,3 +271,103 @@ class SeasonPlanItem(models.Model):
             if not self.item_condition:
                 self.item_condition = self.item.condition
         super().save(*args, **kwargs)
+
+
+class BorrowObject(models.Model):
+    RELATION_CHOICES = [
+        ('family', '家人'),
+        ('relative', '亲戚'),
+        ('friend', '朋友'),
+        ('neighbor', '邻居'),
+        ('colleague', '同事'),
+        ('other', '其他'),
+    ]
+
+    name = models.CharField('借穿人姓名', max_length=100)
+    relation = models.CharField('与您关系', max_length=20, choices=RELATION_CHOICES, blank=True)
+    baby_name = models.CharField('对方宝宝姓名', max_length=50, blank=True)
+    baby_gender = models.CharField('宝宝性别', max_length=1, choices=Baby.GENDER_CHOICES, default='U')
+    baby_birth_date = models.DateField('宝宝出生日期', blank=True, null=True)
+    phone = models.CharField('联系方式', max_length=30, blank=True)
+    address = models.TextField('地址', blank=True)
+    note = models.TextField('备注', blank=True, null=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'borrow_object'
+        ordering = ['-created_at']
+        verbose_name = '借穿对象'
+        verbose_name_plural = verbose_name
+
+    def __str__(self):
+        if self.baby_name:
+            return f'{self.name}({self.baby_name})'
+        return self.name
+
+
+class BorrowRecord(models.Model):
+    STATUS_CHOICES = [
+        ('borrowed', '借出中'),
+        ('overdue', '逾期未还'),
+        ('returned', '已归还'),
+        ('returned_damaged', '归还有损坏'),
+    ]
+
+    WASH_STATUS_CHOICES = [
+        ('unwashed', '未清洗'),
+        ('washed', '已清洗'),
+        ('to_wash', '需清洗后归还'),
+    ]
+
+    CONDITION_CHANGE_CHOICES = [
+        ('same', '无变化'),
+        ('slight', '轻微变旧'),
+        ('noticeable', '明显变旧'),
+        ('damaged', '有损坏'),
+    ]
+
+    item = models.ForeignKey(ClothingItem, on_delete=models.CASCADE, related_name='borrow_records', verbose_name='借出物品')
+    borrower = models.ForeignKey(BorrowObject, on_delete=models.SET_NULL, null=True, blank=True, related_name='borrow_records', verbose_name='借穿对象')
+    borrower_name = models.CharField('借穿人(冗余)', max_length=100, blank=True)
+    baby_name = models.CharField('借穿宝宝(冗余)', max_length=50, blank=True)
+    borrow_date = models.DateField('借出时间')
+    expected_return_date = models.DateField('预计归还时间', blank=True, null=True)
+    actual_return_date = models.DateField('实际归还时间', blank=True, null=True)
+    status = models.CharField('归还状态', max_length=20, choices=STATUS_CHOICES, default='borrowed')
+    original_condition = models.CharField('借出时成色', max_length=10, choices=ClothingItem.CONDITION_CHOICES)
+    return_condition = models.CharField('归还时成色', max_length=10, choices=ClothingItem.CONDITION_CHOICES, blank=True, null=True)
+    condition_change = models.CharField('成色变化', max_length=20, choices=CONDITION_CHANGE_CHOICES, blank=True, null=True)
+    wash_status = models.CharField('清洗状态', max_length=20, choices=WASH_STATUS_CHOICES, default='unwashed')
+    note = models.TextField('备注', blank=True, null=True)
+    return_note = models.TextField('归还备注', blank=True, null=True)
+    suggest_transfer = models.BooleanField('建议转送', default=False)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'borrow_record'
+        ordering = ['-borrow_date', '-created_at']
+        verbose_name = '借穿记录'
+        verbose_name_plural = verbose_name
+
+    def __str__(self):
+        return f'{self.item.name} -> {self.borrower_name}'
+
+    def save(self, *args, **kwargs):
+        if self.borrower and not self.borrower_name:
+            self.borrower_name = self.borrower.name
+        if self.borrower and self.borrower.baby_name and not self.baby_name:
+            self.baby_name = self.borrower.baby_name
+        super().save(*args, **kwargs)
+
+    def is_overdue(self):
+        from datetime import date
+        if self.status == 'borrowed' and self.expected_return_date:
+            return date.today() > self.expected_return_date
+        return False
+
+    def update_overdue_status(self):
+        if self.is_overdue() and self.status == 'borrowed':
+            self.status = 'overdue'
+            self.save(update_fields=['status', 'updated_at'])

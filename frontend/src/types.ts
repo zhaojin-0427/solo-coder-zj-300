@@ -49,6 +49,9 @@ export interface ClothingItem {
   image_url?: string
   fit_status?: string
   fit_reason?: string
+  is_borrowed?: boolean
+  is_lent?: boolean
+  current_borrow?: BorrowRecordSummary | null
   created_at?: string
   updated_at?: string
 }
@@ -92,6 +95,7 @@ export interface GrowthFitData {
     near_limit: number
     fits: number
     too_big: number
+    lent: number
   }
   warnings: Array<{ level: string; text: string }>
   items: {
@@ -99,6 +103,7 @@ export interface GrowthFitData {
     near_limit: ClothingItem[]
     fits: ClothingItem[]
     too_big: ClothingItem[]
+    lent: ClothingItem[]
   }
 }
 
@@ -109,6 +114,7 @@ export type PlanItemCategory =
   | 'near_unsuitable'
   | 'suggest_transfer'
   | 'next_season_prep'
+  | 'lent'
 export type ItemStatusAction = 'to_give' | 'reserved' | 'keep' | 'none'
 
 export interface SeasonPlanItem {
@@ -129,6 +135,7 @@ export interface SeasonPlanItem {
   item_condition: string
   note?: string
   item_info?: ClothingItem | null
+  item_current_borrow?: BorrowRecordSummary | null
   created_at?: string
   updated_at?: string
 }
@@ -138,6 +145,7 @@ export interface SeasonPlanStats {
   near_unsuitable: number
   suggest_transfer: number
   next_season_prep: number
+  lent: number
   action_to_give: number
   action_reserved: number
   action_keep: number
@@ -196,6 +204,89 @@ export interface SeasonPlanStatistics {
   next_season_gap_summary: SeasonPlanGap[]
 }
 
+export interface BorrowObject {
+  id: number
+  name: string
+  relation: string
+  relation_display?: string
+  baby_name: string
+  baby_gender: 'M' | 'F' | 'U'
+  baby_gender_display?: string
+  baby_birth_date?: string
+  phone: string
+  address: string
+  note?: string
+  borrow_count?: number
+  current_borrow_count?: number
+  created_at?: string
+  updated_at?: string
+}
+
+export interface BorrowRecordSummary {
+  id: number
+  item: number
+  item_name?: string
+  item_category?: string
+  item_size_label?: string
+  borrower?: number | null
+  borrower_name: string
+  baby_name: string
+  borrower_info?: BorrowObject | null
+  borrow_date: string
+  expected_return_date?: string | null
+  actual_return_date?: string | null
+  status: string
+  status_display?: string
+  original_condition: string
+  original_condition_display?: string
+  return_condition?: string | null
+  return_condition_display?: string | null
+  condition_change?: string | null
+  condition_change_display?: string | null
+  wash_status: string
+  wash_status_display?: string
+  note?: string
+  return_note?: string
+  suggest_transfer?: boolean
+  is_overdue?: boolean
+  days_borrowed?: number
+  days_overdue?: number
+  created_at?: string
+  updated_at?: string
+}
+
+export interface BorrowRecord extends BorrowRecordSummary {}
+
+export interface BorrowStatistics {
+  recent_30d_borrow_count: number
+  on_time_return_rate: number
+  overdue_count: number
+  condition_decline_count: number
+  most_borrowed_categories: Array<{
+    category: string
+    code: string
+    count: number
+  }>
+  most_active_borrowers?: Array<{
+    name: string
+    count: number
+  }>
+  recent_30days?: {
+    borrowed_count: number
+    returned_count: number
+    on_time_return_rate: number
+    overdue_count: number
+    condition_decline_count: number
+  }
+  overall?: {
+    total_borrow_count: number
+    total_returned: number
+    total_borrowed_value: number
+  }
+  current_lent_count?: number
+  current_lent_rate?: number
+}
+
 export interface Statistics {
   overview: {
     total_items: number
@@ -206,6 +297,8 @@ export interface Statistics {
     completed_transfers: number
     given_item_count: number
     given_item_rate: number
+    lent_item_count: number
+    lent_item_rate: number
   }
   status_distribution: Record<string, number>
   category_stats: { labels: string[]; values: number[] }
@@ -226,4 +319,5 @@ export interface Statistics {
   }>
   monthly_transfers: { labels: string[]; values: number[] }
   season_plan_stats?: SeasonPlanStatistics
+  borrow_stats?: BorrowStatistics
 }

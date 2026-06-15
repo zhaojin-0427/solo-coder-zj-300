@@ -11,6 +11,10 @@ import type {
   SeasonPlanItem,
   ItemStatusAction,
   PlanItemCategory,
+  BorrowObject,
+  BorrowRecord,
+  BorrowRecordSummary,
+  BorrowStatistics,
 } from './types'
 
 const API_BASE = '/api'
@@ -93,6 +97,34 @@ export const api = {
     axios.post<SeasonPlan>(`${API_BASE}/season-plans/${id}/complete/`, { note }).then(r => r.data),
   getSeasonPlanRecentStats: (baby?: number) =>
     axios.get(`${API_BASE}/season-plans/recent-stats/`, { params: { baby } }).then(r => r.data),
+
+  // Borrow objects
+  getBorrowObjects: () =>
+    axios.get<BorrowObject[]>(`${API_BASE}/borrow-objects/`).then(r => r.data),
+  createBorrowObject: (data: Partial<BorrowObject>) =>
+    axios.post<BorrowObject>(`${API_BASE}/borrow-objects/`, data).then(r => r.data),
+  updateBorrowObject: (id: number, data: Partial<BorrowObject>) =>
+    axios.put<BorrowObject>(`${API_BASE}/borrow-objects/${id}/`, data).then(r => r.data),
+  deleteBorrowObject: (id: number) =>
+    axios.delete(`${API_BASE}/borrow-objects/${id}/`),
+
+  // Borrow records
+  getBorrowRecords: (params?: Record<string, any>) =>
+    axios.get<BorrowRecord[]>(`${API_BASE}/borrow-records/`, { params }).then(r => r.data),
+  createBorrowRecord: (data: Partial<BorrowRecord>) =>
+    axios.post<BorrowRecord>(`${API_BASE}/borrow-records/`, data).then(r => r.data),
+  updateBorrowRecord: (id: number, data: Partial<BorrowRecord>) =>
+    axios.put<BorrowRecord>(`${API_BASE}/borrow-records/${id}/`, data).then(r => r.data),
+  deleteBorrowRecord: (id: number) =>
+    axios.delete(`${API_BASE}/borrow-records/${id}/`),
+  getOverdueBorrowRecords: (baby?: number) =>
+    axios.get<{ count: number; records: BorrowRecordSummary[] }>(`${API_BASE}/borrow-records/overdue/`, { params: { baby } }).then(r => r.data),
+  getActiveBorrowRecords: (baby?: number) =>
+    axios.get<{ count: number; records: BorrowRecordSummary[] }>(`${API_BASE}/borrow-records/active/`, { params: { baby } }).then(r => r.data),
+  returnBorrowRecord: (id: number, data: any) =>
+    axios.post<{ message: string; record: BorrowRecordSummary; suggest_transfer: boolean }>(`${API_BASE}/borrow-records/${id}/return/`, data).then(r => r.data),
+  getBorrowStatistics: (baby?: number) =>
+    axios.get<BorrowStatistics>(`${API_BASE}/borrow-records/statistics/`, { params: { baby } }).then(r => r.data),
 }
 
 export const categoryOptions = [
@@ -180,4 +212,55 @@ export const itemStatusActionOptions = [
   { value: 'reserved', label: '标记已预定' },
   { value: 'keep', label: '继续自留' },
   { value: 'none', label: '无操作' },
+]
+
+export const statusOptionsWithLent = [
+  { value: 'keep', label: '自留' },
+  { value: 'to_give', label: '待转送' },
+  { value: 'reserved', label: '已预定' },
+  { value: 'given', label: '已送出' },
+  { value: 'lent', label: '借出中' },
+]
+
+export const relationOptions = [
+  { value: 'family', label: '家人' },
+  { value: 'relative', label: '亲戚' },
+  { value: 'friend', label: '朋友' },
+  { value: 'neighbor', label: '邻居' },
+  { value: 'colleague', label: '同事' },
+  { value: 'other', label: '其他' },
+]
+
+export const borrowStatusOptions = [
+  { value: 'borrowed', label: '借出中' },
+  { value: 'overdue', label: '逾期未还' },
+  { value: 'returned', label: '已归还' },
+  { value: 'returned_damaged', label: '归还有损坏' },
+]
+
+export const borrowStatusGroupOptions = [
+  { value: 'all', label: '全部' },
+  { value: 'active', label: '借出中/逾期' },
+  { value: 'returned', label: '已归还' },
+]
+
+export const washStatusOptions = [
+  { value: 'unwashed', label: '未清洗' },
+  { value: 'washed', label: '已清洗' },
+  { value: 'to_wash', label: '需清洗后归还' },
+]
+
+export const conditionChangeOptions = [
+  { value: 'same', label: '无变化' },
+  { value: 'slight', label: '轻微变旧' },
+  { value: 'noticeable', label: '明显变旧' },
+  { value: 'damaged', label: '有损坏' },
+]
+
+export const planItemCategoryOptionsWithLent = [
+  { value: 'continue_wear', label: '本季可继续穿' },
+  { value: 'near_unsuitable', label: '即将不合身' },
+  { value: 'suggest_transfer', label: '建议转送' },
+  { value: 'next_season_prep', label: '下一季待准备' },
+  { value: 'lent', label: '暂不可整理(借出中)' },
 ]

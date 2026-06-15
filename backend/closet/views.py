@@ -9,13 +9,15 @@ from rest_framework.views import APIView
 from datetime import date, timedelta
 from collections import defaultdict
 
-from .models import Baby, GrowthRecord, ClothingItem, TransferRecipient, TransferRecord, SeasonPlan, SeasonPlanItem
+from .models import Baby, GrowthRecord, ClothingItem, TransferRecipient, TransferRecord, SeasonPlan, SeasonPlanItem, BorrowObject, BorrowRecord
 from .serializers import (
     BabySerializer, GrowthRecordSerializer, ClothingItemSerializer,
     TransferRecipientSerializer, TransferRecordSerializer,
     SeasonPlanSerializer, SeasonPlanItemSerializer,
     SeasonPlanBatchActionSerializer, SeasonPlanChangeCategorySerializer,
     generate_auto_classified_items, calculate_fit, get_baby_age_months,
+    BorrowObjectSerializer, BorrowRecordSerializer, BorrowReturnSerializer,
+    BorrowRecordSummarySerializer,
 )
 
 
@@ -75,6 +77,177 @@ class TransferRecordViewSet(viewsets.ModelViewSet):
     ordering_fields = ['transfer_date', 'created_at']
 
 
+class BorrowObjectViewSet(viewsets.ModelViewSet):
+    queryset = BorrowObject.objects.all()
+    serializer_class = BorrowObjectSerializer
+    filterset_fields = ['relation']
+    search_fields = ['name', 'baby_name', 'phone']
+    ordering_fields = ['created_at', 'name']
+
+
+class BorrowRecordViewSet(viewsets.ModelViewSet):
+    queryset = BorrowRecord.objects.all()
+    serializer_class = BorrowRecordSerializer
+    filterset_fields = ['item', 'borrower', 'status', 'wash_status', 'condition_change']
+    search_fields = ['borrower_name', 'baby_name', 'note', 'item__name']
+    ordering_fields = ['borrow_date', 'expected_return_date', 'actual_return_date', 'created_at']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        baby_id = self.request.query_params.get('baby')
+        if baby_id:
+            queryset = queryset.filter(item__baby_id=baby_id)
+        status_filter = self.request.query_params.get('status_group')
+        if status_filter == 'active':
+            queryset = queryset.filter(status__in=['borrowed', 'overdue'])
+        elif status_filter == 'returned':
+            queryset = queryset.filter(status__in=['returned', 'returned_damaged'])
+        for record in queryset.filter(status='borrowed'):
+            if record.is_overdue():
+                record.update_overdue_status()
+        return queryset
+
+    @action(detail=False, methods=['get'], url_path='overdue')
+    def get_overdue(self, request):
+        baby_id = request.query_params.get('baby')
+        queryset = self.get_queryset()
+        if baby_id:
+            queryset = queryset.filter(item__baby_id=baby_id)
+        overdue_records = queryset.filter(status='overdue')
+        serializer = BorrowRecordSummarySerializer(overdue_records, many=True)
+        return Response({
+            'count': overdue_records.count(),
+            'records': serializer.data,
+        })
+
+    @action(detail=False, methods=['get'], url_path='active')
+    def get_active(self, request):
+        baby_id = request.query_params.get('baby')
+        queryset = self.get_queryset()
+        if baby_id:
+            queryset = queryset.filter(item__baby_id=baby_id)
+        active_records = queryset.filter(status__in=['borrowed', 'overdue'])
+        serializer = BorrowRecordSummarySerializer(active_records, many=True)
+        return Response({
+            'count': active_records.count(),
+            'records': serializer.data,
+        })
+
+    @action(detail=True, methods=['post'], url_path='return')
+    def return_item(self, request, pk=None):
+        record = self.get_object()
+        serializer = BorrowReturnSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        record.actual_return_date = data.get('actual_return_date') or date.today()
+        record.return_condition = data['return_condition']
+        record.condition_change = data['condition_change']
+        record.wash_status = data['wash_status']
+        record.return_note = data.get('return_note', '')
+        record.suggest_transfer = data['suggest_transfer']
+        record.status = data['status']
+        record.save()
+
+        item = record.item
+        if item and item.status == 'lent':
+            if record.suggest_transfer:
+                item.status = 'to_give'
+            else:
+                item.status = 'keep'
+            if record.return_condition and record.return_condition != record.original_condition:
+                item.condition = record.return_condition
+            item.save(update_fields=['status', 'condition', 'updated_at'])
+
+        return Response({
+            'message': '归还确认成功',
+            'record': BorrowRecordSummarySerializer(record).data,
+            'suggest_transfer': record.suggest_transfer,
+        })
+
+    @action(detail=False, methods=['get'], url_path='statistics')
+    def get_statistics(self, request):
+        baby_id = request.query_params.get('baby')
+        borrow_qs = BorrowRecord.objects.all()
+        if baby_id:
+            borrow_qs = borrow_qs.filter(item__baby_id=baby_id)
+
+        thirty_days_ago = date.today() - timedelta(days=30)
+        recent_borrows = borrow_qs.filter(borrow_date__gte=thirty_days_ago)
+
+        total_recent_borrowed = recent_borrows.count()
+
+        returned_recent = recent_borrows.filter(status__in=['returned', 'returned_damaged'])
+        on_time_returned = 0
+        for record in returned_recent:
+            if record.expected_return_date and record.actual_return_date:
+                if record.actual_return_date <= record.expected_return_date:
+                    on_time_returned += 1
+        return_count = returned_recent.count()
+        on_time_rate = round(on_time_returned / return_count * 100, 1) if return_count > 0 else 0
+
+        overdue_count = borrow_qs.filter(status='overdue').count()
+
+        condition_decline_count = borrow_qs.filter(
+            status__in=['returned', 'returned_damaged'],
+            condition_change__in=['slight', 'noticeable', 'damaged']
+        ).count()
+
+        category_stats = borrow_qs.values('item__category').annotate(
+            count=Count('id')
+        ).order_by('-count')[:5]
+
+        cat_map = {
+            'onesie': '连体衣', 'tshirt': 'T恤', 'shirt': '衬衫', 'pants': '裤子',
+            'shorts': '短裤', 'dress': '连衣裙', 'skirt': '裙子', 'coat': '外套',
+            'jacket': '夹克', 'sweater': '毛衣', 'hoodie': '卫衣', 'underwear': '内衣',
+            'socks': '袜子', 'shoes': '鞋子', 'hat': '帽子', 'bib': '围兜',
+            'blanket': '毯子', 'sleepwear': '睡衣', 'swimwear': '泳装', 'other': '其他'
+        }
+
+        most_borrowed_categories = []
+        for cs in category_stats:
+            most_borrowed_categories.append({
+                'category': cat_map.get(cs['item__category'], cs['item__category']),
+                'code': cs['item__category'],
+                'count': cs['count'],
+            })
+
+        borrower_stats = borrow_qs.values('borrower_name').annotate(
+            count=Count('id')
+        ).order_by('-count')[:5]
+
+        most_active_borrowers = []
+        for bs in borrower_stats:
+            most_active_borrowers.append({
+                'name': bs['borrower_name'] or '未知',
+                'count': bs['count'],
+            })
+
+        total_borrow_count = borrow_qs.count()
+        total_returned = borrow_qs.filter(status__in=['returned', 'returned_damaged']).count()
+        total_borrowed_value = sum(
+            (br.item.purchase_price or 0) for br in borrow_qs.select_related('item')
+        )
+
+        return Response({
+            'recent_30days': {
+                'borrowed_count': total_recent_borrowed,
+                'returned_count': return_count,
+                'on_time_return_rate': on_time_rate,
+                'overdue_count': overdue_count,
+                'condition_decline_count': condition_decline_count,
+            },
+            'most_borrowed_categories': most_borrowed_categories,
+            'most_active_borrowers': most_active_borrowers,
+            'overall': {
+                'total_borrow_count': total_borrow_count,
+                'total_returned': total_returned,
+                'total_borrowed_value': float(total_borrowed_value),
+            },
+        })
+
+
 class StatisticsView(APIView):
     def get(self, request):
         baby_id = request.query_params.get('baby')
@@ -82,11 +255,13 @@ class StatisticsView(APIView):
         clothes_qs = ClothingItem.objects.all()
         transfers_qs = TransferRecord.objects.all()
         growth_qs = GrowthRecord.objects.all()
+        borrow_qs = BorrowRecord.objects.all()
 
         if baby_id:
             clothes_qs = clothes_qs.filter(baby_id=baby_id)
             transfers_qs = transfers_qs.filter(item__baby_id=baby_id)
             growth_qs = growth_qs.filter(baby_id=baby_id)
+            borrow_qs = borrow_qs.filter(item__baby_id=baby_id)
 
         total_items = clothes_qs.count()
         total_value = clothes_qs.aggregate(Sum('purchase_price'))['purchase_price__sum'] or 0
@@ -99,7 +274,8 @@ class StatisticsView(APIView):
                 'keep': '自留',
                 'to_give': '待转送',
                 'reserved': '已预定',
-                'given': '已送出'
+                'given': '已送出',
+                'lent': '借出中'
             }
             status_map[label_map.get(key, key)] = s['count']
 
@@ -109,13 +285,35 @@ class StatisticsView(APIView):
         given_item_count = clothes_qs.filter(status='given').count()
         given_item_rate = round(given_item_count / total_items * 100, 1) if total_items > 0 else 0
 
+        lent_item_count = clothes_qs.filter(status='lent').count()
+        lent_item_rate = round(lent_item_count / total_items * 100, 1) if total_items > 0 else 0
+
         total_transfers = transfers_qs.count()
         completed_transfers = transfers_qs.filter(status='completed').count()
         transfer_success_rate = round(completed_transfers / total_transfers * 100, 1) if total_transfers > 0 else 0
 
-        category_stats = clothes_qs.values('category').annotate(count=Count('id')).order_by('-count')
-        category_labels = []
-        category_values = []
+        thirty_days_ago = date.today() - timedelta(days=30)
+        recent_borrows = borrow_qs.filter(borrow_date__gte=thirty_days_ago)
+        total_recent_borrowed = recent_borrows.count()
+
+        returned_recent = recent_borrows.filter(status__in=['returned', 'returned_damaged'])
+        on_time_returned = 0
+        for record in returned_recent:
+            if record.expected_return_date and record.actual_return_date:
+                if record.actual_return_date <= record.expected_return_date:
+                    on_time_returned += 1
+        return_count = returned_recent.count()
+        on_time_return_rate = round(on_time_returned / return_count * 100, 1) if return_count > 0 else 0
+
+        overdue_count = borrow_qs.filter(status='overdue').count()
+        condition_decline_count = borrow_qs.filter(
+            status__in=['returned', 'returned_damaged'],
+            condition_change__in=['slight', 'noticeable', 'damaged']
+        ).count()
+
+        category_stats = borrow_qs.values('item__category').annotate(
+            count=Count('id')
+        ).order_by('-count')[:5]
         cat_map = {
             'onesie': '连体衣', 'tshirt': 'T恤', 'shirt': '衬衫', 'pants': '裤子',
             'shorts': '短裤', 'dress': '连衣裙', 'skirt': '裙子', 'coat': '外套',
@@ -123,7 +321,18 @@ class StatisticsView(APIView):
             'socks': '袜子', 'shoes': '鞋子', 'hat': '帽子', 'bib': '围兜',
             'blanket': '毯子', 'sleepwear': '睡衣', 'swimwear': '泳装', 'other': '其他'
         }
-        for c in category_stats:
+        most_borrowed_categories = []
+        for cs in category_stats:
+            most_borrowed_categories.append({
+                'category': cat_map.get(cs['item__category'], cs['item__category']),
+                'code': cs['item__category'],
+                'count': cs['count'],
+            })
+
+        clothes_category_stats = clothes_qs.values('category').annotate(count=Count('id')).order_by('-count')
+        category_labels = []
+        category_values = []
+        for c in clothes_category_stats:
             category_labels.append(cat_map.get(c['category'], c['category']))
             category_values.append(c['count'])
 
@@ -150,6 +359,23 @@ class StatisticsView(APIView):
 
         season_plan_stats = self._get_season_plan_stats(baby_id)
 
+        borrow_stats = {
+            'recent_30d_borrow_count': total_recent_borrowed,
+            'on_time_return_rate': on_time_return_rate,
+            'overdue_count': overdue_count,
+            'condition_decline_count': condition_decline_count,
+            'recent_30days': {
+                'borrowed_count': total_recent_borrowed,
+                'returned_count': return_count,
+                'on_time_return_rate': on_time_return_rate,
+                'overdue_count': overdue_count,
+                'condition_decline_count': condition_decline_count,
+            },
+            'most_borrowed_categories': most_borrowed_categories,
+            'current_lent_count': lent_item_count,
+            'current_lent_rate': lent_item_rate,
+        }
+
         return Response({
             'overview': {
                 'total_items': total_items,
@@ -160,6 +386,8 @@ class StatisticsView(APIView):
                 'completed_transfers': completed_transfers,
                 'given_item_count': given_item_count,
                 'given_item_rate': given_item_rate,
+                'lent_item_count': lent_item_count,
+                'lent_item_rate': lent_item_rate,
             },
             'status_distribution': status_map,
             'category_stats': {'labels': category_labels, 'values': category_values},
@@ -169,6 +397,7 @@ class StatisticsView(APIView):
             'stock_suggestions': stock_suggestions,
             'monthly_transfers': {'labels': monthly_x, 'values': monthly_y},
             'season_plan_stats': season_plan_stats,
+            'borrow_stats': borrow_stats,
         })
 
     def _calculate_size_cycle(self, given_items_qs, growth_qs):
@@ -449,10 +678,16 @@ class GrowthFitView(APIView):
             status__in=['keep', 'to_give', 'reserved']
         )
 
+        lent_items = ClothingItem.objects.filter(
+            baby_id=baby_id,
+            status='lent'
+        )
+
         too_small = []
         near_limit = []
         fits = []
         too_big = []
+        lent = []
 
         for item in items:
             fit_status, fit_reason = calculate_fit(item, baby, current_height)
@@ -469,6 +704,12 @@ class GrowthFitView(APIView):
             else:
                 fits.append(data)
 
+        for item in lent_items:
+            data = ClothingItemSerializer(item).data
+            data['fit_reason'] = '衣物借出中，暂不可整理'
+            data['is_lent'] = True
+            lent.append(data)
+
         warnings = []
         if near_limit:
             warnings.append({
@@ -480,6 +721,11 @@ class GrowthFitView(APIView):
                 'level': 'danger',
                 'text': f'有{len(too_small)}件衣物已经不合身，可以登记转送'
             })
+        if lent:
+            warnings.append({
+                'level': 'info',
+                'text': f'有{len(lent)}件衣物借出中，暂不可整理'
+            })
 
         return Response({
             'baby': {
@@ -489,11 +735,12 @@ class GrowthFitView(APIView):
                 'weight': current_weight,
             },
             'summary': {
-                'total': items.count(),
+                'total': items.count() + lent_items.count(),
                 'too_small': len(too_small),
                 'near_limit': len(near_limit),
                 'fits': len(fits),
                 'too_big': len(too_big),
+                'lent': len(lent),
             },
             'warnings': warnings,
             'items': {
@@ -501,6 +748,7 @@ class GrowthFitView(APIView):
                 'near_limit': near_limit,
                 'fits': fits,
                 'too_big': too_big,
+                'lent': lent,
             }
         })
 
@@ -574,17 +822,31 @@ class SeasonPlanViewSet(viewsets.ModelViewSet):
         item_ids = serializer.validated_data['item_ids']
         action_value = serializer.validated_data['action']
 
-        items_qs = plan.plan_items.filter(id__in=item_ids).select_related('item')
-        plan_items_list = list(items_qs)
+        all_items = plan.plan_items.filter(id__in=item_ids).select_related('item')
+        lent_items = all_items.filter(item__status='lent')
+        lent_count = lent_items.count()
 
-        updated_count = plan.plan_items.filter(id__in=item_ids).update(item_status_action=action_value)
+        if action_value in ('to_give', 'reserved') and lent_count > 0:
+            return Response({
+                'error': f'有 {lent_count} 件衣物处于借出中状态，无法执行转送批量操作。请先归还后再操作。',
+                'lent_count': lent_count,
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        processable_items = all_items.exclude(item__status='lent')
+        plan_items_list = list(processable_items)
+        processable_ids = [pi.id for pi in plan_items_list]
+
+        updated_count = 0
+        if processable_ids:
+            updated_count = plan.plan_items.filter(id__in=processable_ids).update(item_status_action=action_value)
 
         transfer_records_created = 0
         rollback_count = 0
+        skipped_lent_count = lent_count
 
         if action_value in ('to_give', 'reserved', 'keep'):
             for plan_item in plan_items_list:
-                if plan_item.item and plan_item.item.status != 'given':
+                if plan_item.item and plan_item.item.status != 'given' and plan_item.item.status != 'lent':
                     plan_item.item.status = action_value
                     plan_item.item.save(update_fields=['status', 'updated_at'])
 
@@ -618,6 +880,8 @@ class SeasonPlanViewSet(viewsets.ModelViewSet):
                     ).update(status='cancelled')
 
         result_msg = f'已批量处理 {updated_count} 条记录'
+        if skipped_lent_count > 0:
+            result_msg += f'，跳过 {skipped_lent_count} 件借出中衣物'
         if transfer_records_created > 0:
             result_msg += f'，自动生成 {transfer_records_created} 条待交接转送记录'
         if rollback_count > 0:
@@ -628,6 +892,7 @@ class SeasonPlanViewSet(viewsets.ModelViewSet):
             'updated_count': updated_count,
             'transfer_records_created': transfer_records_created,
             'rollback_count': rollback_count,
+            'skipped_lent_count': skipped_lent_count,
         })
 
     @action(detail=True, methods=['post'], url_path='change-category')

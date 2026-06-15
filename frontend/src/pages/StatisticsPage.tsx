@@ -10,7 +10,7 @@ import {
 } from 'recharts'
 import {
   WarningOutlined, BulbOutlined, FireOutlined, CheckCircleOutlined,
-  UnorderedListOutlined, CalendarOutlined
+  UnorderedListOutlined, CalendarOutlined, SwapOutlined
 } from '@ant-design/icons'
 import { api } from '../api'
 import type { Statistics } from '../types'
@@ -20,6 +20,7 @@ const STATUS_COLORS: Record<string, string> = {
   '待转送': '#fa8c16',
   '已预定': '#722ed1',
   '已送出': '#52c41a',
+  '借出中': '#13c2c2',
 }
 
 const SEASON_COLORS: Record<string, string> = {
@@ -133,6 +134,70 @@ export default function StatisticsPage() {
           </Card>
         </Col>
       </Row>
+
+      {/* Borrow statistics */}
+      {data?.borrow_stats && (
+        <>
+          <h3 className="section-title">
+            <SwapOutlined style={{ color: '#13c2c2' }} /> 临时借穿统计
+          </h3>
+          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+            <Col xs={12} sm={8} md={4}>
+              <Card className="stat-card">
+                <div className="stat-value" style={{ color: '#13c2c2' }}>
+                  {data.borrow_stats.recent_30d_borrow_count || 0}
+                </div>
+                <div className="stat-label">近30天借出</div>
+              </Card>
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <Card className="stat-card">
+                <div style={{ marginBottom: 8 }}>
+                  <Progress
+                    type="dashboard"
+                    percent={data.borrow_stats.on_time_return_rate || 0}
+                    strokeColor="#52c41a"
+                    size={60}
+                  />
+                </div>
+                <div className="stat-label">按时归还率</div>
+              </Card>
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <Card className="stat-card">
+                <div className="stat-value" style={{ color: '#ff4d4f' }}>
+                  {data.borrow_stats.overdue_count || 0}
+                </div>
+                <div className="stat-label">逾期未还</div>
+              </Card>
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <Card className="stat-card">
+                <div className="stat-value" style={{ color: '#fa8c16' }}>
+                  {data.borrow_stats.condition_decline_count || 0}
+                </div>
+                <div className="stat-label">成色下降</div>
+              </Card>
+            </Col>
+            <Col xs={12} sm={8} md={8}>
+              <Card size="small" className="stat-card">
+                <div className="stat-label" style={{ marginBottom: 8 }}>最常借出品类</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {data.borrow_stats.most_borrowed_categories?.length > 0 ? (
+                    data.borrow_stats.most_borrowed_categories.map((cat, idx) => (
+                      <Tag key={idx} color="cyan">
+                        {cat.category} {cat.count}次
+                      </Tag>
+                    ))
+                  ) : (
+                    <span style={{ color: '#888' }}>暂无借穿记录</span>
+                  )}
+                </div>
+              </Card>
+            </Col>
+          </Row>
+        </>
+      )}
 
       {/* Charts row 1 */}
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
