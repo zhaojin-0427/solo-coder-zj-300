@@ -21,6 +21,66 @@ export interface GrowthRecord {
   created_at?: string
 }
 
+export type CareStatus =
+  | 'to_wash'
+  | 'washing'
+  | 'to_dry'
+  | 'drying'
+  | 'to_sterilize'
+  | 'sterilizing'
+  | 'to_store'
+  | 'stored'
+  | 'in_use'
+
+export type WashMethod = 'hand' | 'machine_normal' | 'machine_gentle' | 'dry_clean' | 'wipe'
+export type SterilizeMethod = 'none' | 'sunlight' | 'steam' | 'uv' | 'boil' | 'disinfectant'
+export type DryMethod = 'natural_shade' | 'natural_sun' | 'dryer_low' | 'dryer_normal' | 'flat_dry'
+export type LocationType = 'wardrobe' | 'drawer' | 'shelf' | 'box' | 'hanger' | 'basket' | 'bag' | 'other'
+export type CareType = 'wash' | 'dry' | 'sterilize' | 'store' | 'retrieve' | 'other'
+
+export interface StorageLocation {
+  id: number
+  baby: number
+  baby_name?: string
+  name: string
+  location_type: LocationType
+  location_type_display?: string
+  container_name?: string
+  area?: string
+  shelf_level?: string
+  sort_order?: number
+  note?: string
+  stored_item_count?: number
+  stored_items?: ClothingItem[]
+  created_at?: string
+  updated_at?: string
+}
+
+export interface CareRecord {
+  id: number
+  item: number
+  item_name?: string
+  item_size_label?: string
+  care_type: CareType
+  care_type_display?: string
+  care_date: string
+  care_time?: string
+  wash_method?: WashMethod | null
+  wash_method_display?: string
+  dry_method?: DryMethod | null
+  dry_method_display?: string
+  sterilize_method?: SterilizeMethod | null
+  sterilize_method_display?: string
+  storage_location?: number | null
+  storage_location_info?: StorageLocation | null
+  detergent_used?: string
+  water_temperature?: string
+  duration_minutes?: number | null
+  care_note?: string
+  operator?: string
+  created_at?: string
+}
+
 export interface ClothingItem {
   id: number
   baby: number
@@ -45,6 +105,20 @@ export interface ClothingItem {
   purchase_price?: number
   status: string
   status_display?: string
+  care_status: CareStatus
+  care_status_display?: string
+  storage_location?: number | null
+  storage_location_info?: StorageLocation | null
+  last_wash_date?: string | null
+  last_store_date?: string | null
+  wash_count?: number
+  preferred_wash_method?: WashMethod
+  preferred_wash_method_display?: string
+  preferred_sterilize_method?: SterilizeMethod
+  preferred_sterilize_method_display?: string
+  preferred_dry_method?: DryMethod
+  preferred_dry_method_display?: string
+  care_note?: string
   note?: string
   image_url?: string
   fit_status?: string
@@ -52,6 +126,9 @@ export interface ClothingItem {
   is_borrowed?: boolean
   is_lent?: boolean
   current_borrow?: BorrowRecordSummary | null
+  recent_care_records?: CareRecord[]
+  days_since_last_wash?: number | null
+  days_since_last_store?: number | null
   created_at?: string
   updated_at?: string
 }
@@ -134,6 +211,9 @@ export interface SeasonPlanItem {
   item_season: string
   item_condition: string
   note?: string
+  item_care_status?: string | null
+  item_care_status_display?: string | null
+  item_storage_location_info?: { id: number; name: string } | null
   item_info?: ClothingItem | null
   item_current_borrow?: BorrowRecordSummary | null
   created_at?: string
@@ -245,6 +325,8 @@ export interface BorrowRecordSummary {
   condition_change_display?: string | null
   wash_status: string
   wash_status_display?: string
+  item_care_status?: string | null
+  item_care_status_display?: string | null
   note?: string
   return_note?: string
   suggest_transfer?: boolean
@@ -287,6 +369,34 @@ export interface BorrowStatistics {
   current_lent_rate?: number
 }
 
+export interface CareStatistics {
+  recent_30d_wash_count: number
+  to_wash_count: number
+  washing_count: number
+  to_dry_count: number
+  drying_count: number
+  to_sterilize_count: number
+  sterilizing_count: number
+  to_store_count: number
+  stored_count: number
+  in_use_count: number
+  pending_total: number
+  care_status_distribution: Record<string, number>
+  sterilize_coverage_30d: number
+  most_used_locations: Array<{
+    id: number
+    name: string
+    location_type: LocationType
+    location_type_display: string
+    container_name: string
+    area: string
+    stored_count: number
+  }>
+  long_not_stored_count: number
+  long_not_stored_items: ClothingItem[]
+  wash_method_distribution: Record<string, number>
+}
+
 export interface Statistics {
   overview: {
     total_items: number
@@ -320,4 +430,5 @@ export interface Statistics {
   monthly_transfers: { labels: string[]; values: number[] }
   season_plan_stats?: SeasonPlanStatistics
   borrow_stats?: BorrowStatistics
+  care_stats?: CareStatistics
 }

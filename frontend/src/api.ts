@@ -15,6 +15,13 @@ import type {
   BorrowRecord,
   BorrowRecordSummary,
   BorrowStatistics,
+  StorageLocation,
+  CareRecord,
+  CareStatus,
+  WashMethod,
+  SterilizeMethod,
+  DryMethod,
+  CareType,
 } from './types'
 
 const API_BASE = '/api'
@@ -125,6 +132,62 @@ export const api = {
     axios.post<{ message: string; record: BorrowRecordSummary; suggest_transfer: boolean }>(`${API_BASE}/borrow-records/${id}/return/`, data).then(r => r.data),
   getBorrowStatistics: (baby?: number) =>
     axios.get<BorrowStatistics>(`${API_BASE}/borrow-records/statistics/`, { params: { baby } }).then(r => r.data),
+
+  // Storage locations
+  getStorageLocations: (params?: Record<string, any>) =>
+    axios.get<StorageLocation[]>(`${API_BASE}/storage-locations/`, { params }).then(r => r.data),
+  getStorageLocationsWithItems: (baby?: number) =>
+    axios.get<{ count: number; locations: StorageLocation[] }>(`${API_BASE}/storage-locations/with-items/`, { params: { baby } }).then(r => r.data),
+  createStorageLocation: (data: Partial<StorageLocation>) =>
+    axios.post<StorageLocation>(`${API_BASE}/storage-locations/`, data).then(r => r.data),
+  updateStorageLocation: (id: number, data: Partial<StorageLocation>) =>
+    axios.put<StorageLocation>(`${API_BASE}/storage-locations/${id}/`, data).then(r => r.data),
+  deleteStorageLocation: (id: number) =>
+    axios.delete(`${API_BASE}/storage-locations/${id}/`),
+
+  // Care records
+  getCareRecords: (params?: Record<string, any>) =>
+    axios.get<CareRecord[]>(`${API_BASE}/care-records/`, { params }).then(r => r.data),
+  createCareRecord: (data: Partial<CareRecord>) =>
+    axios.post<CareRecord>(`${API_BASE}/care-records/`, data).then(r => r.data),
+  updateCareRecord: (id: number, data: Partial<CareRecord>) =>
+    axios.put<CareRecord>(`${API_BASE}/care-records/${id}/`, data).then(r => r.data),
+  deleteCareRecord: (id: number) =>
+    axios.delete(`${API_BASE}/care-records/${id}/`),
+
+  // Clothing item care actions
+  getClothingCareSummary: (baby?: number) =>
+    axios.get(`${API_BASE}/clothing-items/care-summary/`, { params: { baby } }).then(r => r.data),
+  getClothingPendingList: (baby?: number, careStatus?: CareStatus) =>
+    axios.get<{ count: number; items: ClothingItem[] }>(`${API_BASE}/clothing-items/pending-list/`, { params: { baby, care_status: careStatus } }).then(r => r.data),
+  batchUpdateCareStatus: (itemIds: number[], careStatus: CareStatus) =>
+    axios.post<{ message: string; updated_count: number; skipped_lent_count: number }>(
+      `${API_BASE}/clothing-items/batch-care-status/`,
+      { item_ids: itemIds, care_status: careStatus }
+    ).then(r => r.data),
+  batchWashClothing: (data: {
+    item_ids: number[]
+    wash_method?: WashMethod
+    sterilize_method?: SterilizeMethod
+    dry_method?: DryMethod
+    care_date?: string
+    detergent_used?: string
+    water_temperature?: string
+    care_note?: string
+    operator?: string
+  }) =>
+    axios.post<{ message: string; updated_count: number }>(`${API_BASE}/clothing-items/batch-wash/`, data).then(r => r.data),
+  batchStoreClothing: (data: {
+    item_ids: number[]
+    storage_location: number
+    care_date?: string
+    care_note?: string
+    operator?: string
+  }) =>
+    axios.post<{ message: string; updated_count: number; storage_location: StorageLocation }>(
+      `${API_BASE}/clothing-items/batch-store/`,
+      data
+    ).then(r => r.data),
 }
 
 export const categoryOptions = [
@@ -264,3 +327,84 @@ export const planItemCategoryOptionsWithLent = [
   { value: 'next_season_prep', label: '下一季待准备' },
   { value: 'lent', label: '暂不可整理(借出中)' },
 ]
+
+export const careStatusOptions = [
+  { value: 'to_wash', label: '待清洗' },
+  { value: 'washing', label: '清洗中' },
+  { value: 'to_dry', label: '待晾晒' },
+  { value: 'drying', label: '晾晒中' },
+  { value: 'to_sterilize', label: '需消毒' },
+  { value: 'sterilizing', label: '消毒中' },
+  { value: 'to_store', label: '待入柜' },
+  { value: 'stored', label: '已入柜' },
+  { value: 'in_use', label: '穿着中' },
+]
+
+export const careStatusBatchOptions = [
+  { value: 'to_wash', label: '标记待清洗' },
+  { value: 'washing', label: '标记清洗中' },
+  { value: 'to_dry', label: '标记待晾晒' },
+  { value: 'drying', label: '标记晾晒中' },
+  { value: 'to_sterilize', label: '标记需消毒' },
+  { value: 'sterilizing', label: '标记消毒中' },
+  { value: 'to_store', label: '标记待入柜' },
+  { value: 'stored', label: '标记已入柜' },
+  { value: 'in_use', label: '标记取出使用' },
+]
+
+export const washMethodOptions = [
+  { value: 'hand', label: '手洗' },
+  { value: 'machine_normal', label: '机洗普通' },
+  { value: 'machine_gentle', label: '机洗轻柔' },
+  { value: 'dry_clean', label: '干洗' },
+  { value: 'wipe', label: '擦拭清洁' },
+]
+
+export const sterilizeMethodOptions = [
+  { value: 'none', label: '无需消毒' },
+  { value: 'sunlight', label: '阳光暴晒' },
+  { value: 'steam', label: '蒸汽消毒' },
+  { value: 'uv', label: '紫外线消毒' },
+  { value: 'boil', label: '煮沸消毒' },
+  { value: 'disinfectant', label: '消毒液浸泡' },
+]
+
+export const dryMethodOptions = [
+  { value: 'natural_shade', label: '阴干' },
+  { value: 'natural_sun', label: '日晒' },
+  { value: 'dryer_low', label: '烘干机低温' },
+  { value: 'dryer_normal', label: '烘干机常温' },
+  { value: 'flat_dry', label: '平铺晾晒' },
+]
+
+export const locationTypeOptions = [
+  { value: 'wardrobe', label: '衣柜' },
+  { value: 'drawer', label: '抽屉' },
+  { value: 'shelf', label: '架子' },
+  { value: 'box', label: '收纳箱' },
+  { value: 'hanger', label: '挂架' },
+  { value: 'basket', label: '收纳篮' },
+  { value: 'bag', label: '收纳袋' },
+  { value: 'other', label: '其他' },
+]
+
+export const careTypeOptions = [
+  { value: 'wash', label: '清洗' },
+  { value: 'dry', label: '晾晒' },
+  { value: 'sterilize', label: '消毒' },
+  { value: 'store', label: '入柜' },
+  { value: 'retrieve', label: '取出使用' },
+  { value: 'other', label: '其他护理' },
+]
+
+export const careStatusTagColors: Record<string, string> = {
+  to_wash: 'volcano',
+  washing: 'orange',
+  to_dry: 'gold',
+  drying: 'lime',
+  to_sterilize: 'magenta',
+  sterilizing: 'purple',
+  to_store: 'geekblue',
+  stored: 'green',
+  in_use: 'cyan',
+}

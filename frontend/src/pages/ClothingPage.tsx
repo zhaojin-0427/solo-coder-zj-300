@@ -9,9 +9,12 @@ import { PlusOutlined, EditOutlined, DeleteOutlined, GiftOutlined } from '@ant-d
 import {
   api, categoryOptions, seasonOptions, conditionOptions,
   statusOptions, statusOptionsWithLent, sizeTypeOptions, borrowStatusOptions,
+  careStatusOptions, careStatusTagColors, washMethodOptions,
+  sterilizeMethodOptions, dryMethodOptions,
 } from '../api'
-import type { ClothingItem } from '../types'
+import type { ClothingItem, CareStatus, WashMethod, SterilizeMethod, DryMethod, StorageLocation } from '../types'
 import dayjs from 'dayjs'
+import { useEffect as _useEffect } from 'react'
 
 const statusColorMap: Record<string, string> = {
   keep: 'default',
@@ -32,6 +35,7 @@ export default function ClothingPage() {
   const { selectedBaby } = useBaby()
   const antdApp = AntdApp.useApp()
   const [items, setItems] = useState<ClothingItem[]>([])
+  const [storageLocations, setStorageLocations] = useState<StorageLocation[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editingItem, setEditingItem] = useState<ClothingItem | null>(null)
@@ -46,8 +50,12 @@ export default function ClothingPage() {
       if (filters.category) params.category = filters.category
       if (filters.status) params.status = filters.status
       if (filters.season) params.season = filters.season
-      const data = await api.getClothingItems(params)
+      const [data, locations] = await Promise.all([
+        api.getClothingItems(params),
+        api.getStorageLocations({ baby: selectedBaby.id }),
+      ])
       setItems(data)
+      setStorageLocations(locations)
     } catch (e) {
       antdApp.message.error('加载物品失败')
     } finally {
@@ -70,6 +78,10 @@ export default function ClothingPage() {
       season: 'all',
       min_age_months: 0,
       max_age_months: 12,
+      care_status: 'stored',
+      preferred_wash_method: 'hand_wash',
+      preferred_sterilize_method: 'sunning',
+      preferred_dry_method: 'indoor',
     })
     setModalOpen(true)
   }
@@ -206,6 +218,23 @@ export default function ClothingPage() {
           )}
         </div>
       ),
+    },
+    {
+      title: '护理状态',
+      width: 120,
+      render: (_: any, r: ClothingItem) => {
+        if (!r.care_status) return <span style={{ color: '#999' }}>-</span>
+        return (
+          <div>
+            <Tag color={careStatusTagColors[r.care_status] || 'default'}>{r.care_status_display || r.care_status}</Tag>
+            {r.storage_location_info && (
+              <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+              📍 {r.storage_location_info.name}
+              </div>
+            )}
+          </div>
+        )
+      },
     },
     {
       title: '购入时间',
@@ -428,6 +457,49 @@ export default function ClothingPage() {
               </Form.Item>
             </Col>
           </Row>
+
+          <div style={{ margin: '16px 0 8px', fontWeight: 600, borderLeft: '3px solid #1890ff', paddingLeft: 8 }}>
+            护理收纳设置
+          </div>
+          <Row gutter={16}>
+            <Col span={8}>
+              <Form.Item name="care_status" label="当前护理状态" rules={[{ required: true }]}>
+                <Select options={careStatusOptions} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="storage_location" label="收纳位置">
+                <Select
+                  allowClear
+                  placeholder="请选择位置"
+                  options={storageLocations.map(l => ({ label: l.name, value: l.id }))}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="preferred_wash_method" label="推荐清洗方式">
+                <Select options={washMethodOptions} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={8}>
+              <Form.Item name="preferred_sterilize_method" label="推荐消毒方式">
+                <Select options={sterilizeMethodOptions} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="preferred_dry_method" label="推荐晾晒方式">
+                <Select options={dryMethodOptions} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="care_note" label="护理备注">
+                <Input placeholder="如：反面洗涤、不可漂白等" />
+              </Form.Item>
+            </Col>
+          </Row>
+
           <Form.Item name="note" label="备注">
             <Input.TextArea rows={2} />
           </Form.Item>

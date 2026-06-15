@@ -10,9 +10,10 @@ import {
 } from 'recharts'
 import {
   WarningOutlined, BulbOutlined, FireOutlined, CheckCircleOutlined,
-  UnorderedListOutlined, CalendarOutlined, SwapOutlined
+  UnorderedListOutlined, CalendarOutlined, SwapOutlined, MedicineBoxOutlined,
+  ClockCircleOutlined, HomeOutlined, ExclamationCircleOutlined
 } from '@ant-design/icons'
-import { api } from '../api'
+import { api, careStatusTagColors } from '../api'
 import type { Statistics } from '../types'
 
 const STATUS_COLORS: Record<string, string> = {
@@ -193,6 +194,186 @@ export default function StatisticsPage() {
                     <span style={{ color: '#888' }}>暂无借穿记录</span>
                   )}
                 </div>
+              </Card>
+            </Col>
+          </Row>
+        </>
+      )}
+
+      {/* Care statistics */}
+      {data?.care_stats && (
+        <>
+          <h3 className="section-title">
+            <MedicineBoxOutlined style={{ color: '#eb2f96' }} /> 清洗消毒与收纳统计
+          </h3>
+          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+            <Col xs={12} sm={8} md={4}>
+              <Card className="stat-card">
+                <div className="stat-value" style={{ color: '#eb2f96' }}>
+                  {data.care_stats.recent_30d_wash_count || 0}
+                </div>
+                <div className="stat-label">近30天清洗次数</div>
+              </Card>
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <Card className="stat-card">
+                <div className="stat-value" style={{ color: '#fa541c' }}>
+                  {data.care_stats.to_wash_count || 0}
+                </div>
+                <div className="stat-label">待清洗数量</div>
+              </Card>
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <Card className="stat-card">
+                <div style={{ marginBottom: 8 }}>
+                  <Progress
+                    type="dashboard"
+                    percent={data.care_stats.sterilize_coverage_30d || 0}
+                    strokeColor="#52c41a"
+                    size={60}
+                  />
+                </div>
+                <div className="stat-label">消毒覆盖率(30天)</div>
+              </Card>
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <Card className="stat-card">
+                <div className="stat-value" style={{ color: '#13c2c2' }}>
+                  {data.care_stats.to_sterilize_count || 0}
+                </div>
+                <div className="stat-label">需消毒数量</div>
+              </Card>
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <Card className="stat-card">
+                <div className="stat-value" style={{ color: '#1890ff' }}>
+                  {data.care_stats.stored_count || 0}
+                </div>
+                <div className="stat-label">已入柜数量</div>
+              </Card>
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <Card className="stat-card">
+                <div className="stat-value" style={{ color: '#722ed1' }}>
+                  {data.care_stats.pending_total || 0}
+                </div>
+                <div className="stat-label">待处理总数</div>
+              </Card>
+            </Col>
+          </Row>
+
+          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+            <Col xs={24} md={12}>
+              <Card
+                title={<h3 className="section-title" style={{ marginBottom: 0 }}>
+                  <HomeOutlined style={{ color: '#1890ff' }} /> 高频使用收纳位置
+                </h3>}
+              >
+                {data.care_stats.most_used_locations?.length > 0 ? (
+                  <List
+                    itemLayout="horizontal"
+                    dataSource={data.care_stats.most_used_locations}
+                    renderItem={(loc: any) => (
+                      <List.Item style={{ borderBottom: 'none', padding: '10px 0' }}>
+                        <List.Item.Meta
+                          avatar={
+                            <div
+                              style={{
+                                width: 40, height: 40, borderRadius: 8,
+                                background: '#e6f4ff',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                color: '#1677ff', fontSize: 18, fontWeight: 700
+                              }}
+                            >
+                              {loc.stored_count || 0}
+                            </div>
+                          }
+                          title={
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ fontWeight: 600 }}>{loc.name}</span>
+                              {loc.location_type_display && (
+                                <Tag color="blue">{loc.location_type_display}</Tag>
+                              )}
+                            </div>
+                          }
+                          description={
+                            <div style={{ fontSize: 12, color: '#888' }}>
+                              {loc.container_name && `容器：${loc.container_name}`}
+                              {loc.area && ` · ${loc.area}`}
+                              {loc.shelf_level !== null && loc.shelf_level !== undefined && ` · 第${loc.shelf_level}层`}
+                            </div>
+                          }
+                        />
+                      </List.Item>
+                    )}
+                  />
+                ) : (
+                  <Alert
+                    type="info"
+                    showIcon
+                    icon={<HomeOutlined />}
+                    message="暂无收纳位置数据"
+                    description="在「护理收纳」页面添加收纳位置并登记衣物后，这里将展示高频使用的收纳位置。"
+                  />
+                )}
+              </Card>
+            </Col>
+
+            <Col xs={24} md={12}>
+              <Card
+                title={<h3 className="section-title" style={{ marginBottom: 0 }}>
+                  <ClockCircleOutlined style={{ color: '#fa541c' }} /> 长期未入柜衣物提醒
+                </h3>}
+              >
+                {data.care_stats.long_not_stored_items?.length > 0 ? (
+                  <List
+                    itemLayout="horizontal"
+                    dataSource={data.care_stats.long_not_stored_items}
+                    renderItem={(item: any) => (
+                      <List.Item style={{ borderBottom: 'none', padding: '10px 0' }}>
+                        <List.Item.Meta
+                          avatar={
+                            <div
+                              style={{
+                                width: 40, height: 40, borderRadius: 8,
+                                background: '#fff1f0',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                color: '#cf1322', fontSize: 16
+                              }}
+                            >
+                              <ExclamationCircleOutlined />
+                            </div>
+                          }
+                          title={
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ fontWeight: 600 }}>{item.name}</span>
+                              {item.care_status_display && (
+                                <Tag color={careStatusTagColors[item.care_status || ''] || 'default'}>
+                                  {item.care_status_display}
+                                </Tag>
+                              )}
+                            </div>
+                          }
+                          description={
+                            <div style={{ fontSize: 12, color: '#888' }}>
+                              {item.size_label && `${item.size_label} · `}
+                              {item.category_display}
+                              {item.days_since_last_store && ` · 已${item.days_since_last_store}天未入柜`}
+                            </div>
+                          }
+                        />
+                      </List.Item>
+                    )}
+                  />
+                ) : (
+                  <Alert
+                    type="success"
+                    showIcon
+                    icon={<CheckCircleOutlined />}
+                    message="太棒了！"
+                    description="所有衣物都已及时收纳，没有长期未入柜的衣物。"
+                  />
+                )}
               </Card>
             </Col>
           </Row>

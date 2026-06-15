@@ -1,6 +1,6 @@
 from rest_framework import serializers
-from .models import Baby, GrowthRecord, ClothingItem, TransferRecipient, TransferRecord, SeasonPlan, SeasonPlanItem, BorrowObject, BorrowRecord
-from datetime import date
+from .models import Baby, GrowthRecord, ClothingItem, TransferRecipient, TransferRecord, SeasonPlan, SeasonPlanItem, BorrowObject, BorrowRecord, StorageLocation, CareRecord
+from datetime import date, datetime
 
 HEIGHT_BASED_CATEGORIES = {
     'onesie', 'tshirt', 'shirt', 'pants', 'shorts', 'dress', 'skirt',
@@ -82,6 +82,40 @@ class GrowthRecordSerializer(serializers.ModelSerializer):
         read_only_fields = ('created_at',)
 
 
+class StorageLocationSerializer(serializers.ModelSerializer):
+    location_type_display = serializers.CharField(source='get_location_type_display', read_only=True)
+    stored_item_count = serializers.SerializerMethodField()
+    baby_name = serializers.CharField(source='baby.name', read_only=True)
+
+    class Meta:
+        model = StorageLocation
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at')
+
+    def get_stored_item_count(self, obj):
+        return obj.item_count()
+
+
+class CareRecordSerializer(serializers.ModelSerializer):
+    care_type_display = serializers.CharField(source='get_care_type_display', read_only=True)
+    wash_method_display = serializers.CharField(source='get_wash_method_display', read_only=True)
+    dry_method_display = serializers.CharField(source='get_dry_method_display', read_only=True)
+    sterilize_method_display = serializers.CharField(source='get_sterilize_method_display', read_only=True)
+    item_name = serializers.CharField(source='item.name', read_only=True)
+    item_size_label = serializers.CharField(source='item.size_label', read_only=True)
+    storage_location_info = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CareRecord
+        fields = '__all__'
+        read_only_fields = ('created_at', 'care_time')
+
+    def get_storage_location_info(self, obj):
+        if obj.storage_location:
+            return StorageLocationSerializer(obj.storage_location).data
+        return None
+
+
 class ClothingItemSerializer(serializers.ModelSerializer):
     baby_name = serializers.CharField(source='baby.name', read_only=True)
     category_display = serializers.CharField(source='get_category_display', read_only=True)
@@ -89,14 +123,22 @@ class ClothingItemSerializer(serializers.ModelSerializer):
     condition_display = serializers.CharField(source='get_condition_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     size_type_display = serializers.CharField(source='get_size_type_display', read_only=True)
+    care_status_display = serializers.CharField(source='get_care_status_display', read_only=True)
+    preferred_wash_method_display = serializers.CharField(source='get_preferred_wash_method_display', read_only=True)
+    preferred_sterilize_method_display = serializers.CharField(source='get_preferred_sterilize_method_display', read_only=True)
+    preferred_dry_method_display = serializers.CharField(source='get_preferred_dry_method_display', read_only=True)
     fit_status = serializers.SerializerMethodField()
     current_borrow = serializers.SerializerMethodField()
     is_borrowed = serializers.SerializerMethodField()
+    storage_location_info = serializers.SerializerMethodField()
+    recent_care_records = serializers.SerializerMethodField()
+    days_since_last_wash = serializers.SerializerMethodField()
+    days_since_last_store = serializers.SerializerMethodField()
 
     class Meta:
         model = ClothingItem
         fields = '__all__'
-        read_only_fields = ('created_at', 'updated_at')
+        read_only_fields = ('created_at', 'updated_at', 'wash_count', 'last_wash_date', 'last_store_date')
 
     def get_fit_status(self, obj):
         baby = obj.baby
@@ -118,6 +160,25 @@ class ClothingItemSerializer(serializers.ModelSerializer):
             return BorrowRecordSummarySerializer(current_borrow).data
         return None
 
+    def get_storage_location_info(self, obj):
+        if obj.storage_location:
+            return StorageLocationSerializer(obj.storage_location).data
+        return None
+
+    def get_recent_care_records(self, obj):
+        records = obj.care_records.all()[:5]
+        return CareRecordSerializer(records, many=True).data
+
+    def get_days_since_last_wash(self, obj):
+        if not obj.last_wash_date:
+            return None
+        return (date.today() - obj.last_wash_date).days
+
+    def get_days_since_last_store(self, obj):
+        if not obj.last_store_date:
+            return None
+        return (datetime.now().date() - obj.last_store_date.date()).days
+
     def validate_status(self, value):
         if self.instance:
             old_status = self.instance.status
@@ -135,6 +196,75 @@ class ClothingItemSerializer(serializers.ModelSerializer):
                     '新建物品不能设为借出中状态，请先创建物品再通过借穿管理页面登记借出。'
                 )
         return value
+
+
+class ClothingItemSummarySerializer(serializers.ModelSerializer):
+    baby_name = serializers.CharField(source='baby.name', read_only=True)
+    category_display = serializers.CharField(source='get_category_display', read_only=True)
+    season_display = serializers.CharField(source='get_season_display', read_only=True)
+    condition_display = serializers.CharField(source='get_condition_display', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    care_status_display = serializers.CharField(source='get_care_status_display', read_only=True)
+    size_type_display = serializers.CharField(source='get_size_type_display', read_only=True)
+    fit_status = serializers.SerializerMethodField()
+    storage_location_info = serializers.SerializerMethodField()
+    days_since_last_wash = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ClothingItem
+        fields = [
+            'id', 'baby', 'baby_name', 'name', 'category', 'category_display',
+            'size_type', 'size_type_display', 'size_value', 'size_label',
+            'season', 'season_display', 'condition', 'condition_display',
+            'status', 'status_display', 'care_status', 'care_status_display',
+            'fit_status', 'storage_location', 'storage_location_info',
+            'brand', 'last_wash_date', 'days_since_last_wash',
+            'wash_count', 'image_url', 'care_note',
+        ]
+
+    def get_fit_status(self, obj):
+        baby = obj.baby
+        if not baby:
+            return 'unknown'
+        latest_growth = baby.growth_records.order_by('-record_date').first()
+        current_height = latest_growth.height if latest_growth else None
+        fit_status, _ = calculate_fit(obj, baby, current_height)
+        return fit_status
+
+    def get_storage_location_info(self, obj):
+        if obj.storage_location:
+            return StorageLocationSerializer(obj.storage_location).data
+        return None
+
+    def get_days_since_last_wash(self, obj):
+        if not obj.last_wash_date:
+            return None
+        return (date.today() - obj.last_wash_date).days
+
+
+class CareBatchActionSerializer(serializers.Serializer):
+    item_ids = serializers.ListField(child=serializers.IntegerField())
+    care_status = serializers.ChoiceField(choices=ClothingItem.CARE_STATUS_CHOICES)
+
+
+class CareBatchWashSerializer(serializers.Serializer):
+    item_ids = serializers.ListField(child=serializers.IntegerField())
+    wash_method = serializers.ChoiceField(choices=ClothingItem.WASH_METHOD_CHOICES, required=False)
+    sterilize_method = serializers.ChoiceField(choices=ClothingItem.STERILIZE_METHOD_CHOICES, required=False)
+    dry_method = serializers.ChoiceField(choices=ClothingItem.DRY_METHOD_CHOICES, required=False)
+    care_date = serializers.DateField(required=False)
+    detergent_used = serializers.CharField(required=False, allow_blank=True)
+    water_temperature = serializers.CharField(required=False, allow_blank=True)
+    care_note = serializers.CharField(required=False, allow_blank=True)
+    operator = serializers.CharField(required=False, allow_blank=True)
+
+
+class CareBatchStoreSerializer(serializers.Serializer):
+    item_ids = serializers.ListField(child=serializers.IntegerField())
+    storage_location = serializers.IntegerField()
+    care_date = serializers.DateField(required=False)
+    care_note = serializers.CharField(required=False, allow_blank=True)
+    operator = serializers.CharField(required=False, allow_blank=True)
 
 
 class TransferRecipientSerializer(serializers.ModelSerializer):
@@ -495,14 +625,16 @@ class BorrowRecordSerializer(BorrowRecordSummarySerializer):
             if new_status in ['borrowed', 'overdue']:
                 if item.status != 'lent':
                     item.status = 'lent'
-                    item.save(update_fields=['status', 'updated_at'])
+                    item.care_status = 'in_use'
+                    item.save(update_fields=['status', 'care_status', 'updated_at'])
             return
 
         if old_status != new_status:
             if new_status in ['borrowed', 'overdue']:
                 if item.status != 'lent':
                     item.status = 'lent'
-                    item.save(update_fields=['status', 'updated_at'])
+                    item.care_status = 'in_use'
+                    item.save(update_fields=['status', 'care_status', 'updated_at'])
             elif new_status in ['returned', 'returned_damaged']:
                 if item.status == 'lent':
                     if instance.suggest_transfer:
@@ -511,7 +643,11 @@ class BorrowRecordSerializer(BorrowRecordSummarySerializer):
                         item.status = 'keep'
                     if instance.return_condition and instance.return_condition != instance.original_condition:
                         item.condition = instance.return_condition
-                    item.save(update_fields=['status', 'condition', 'updated_at'])
+                    if instance.wash_status in ['unwashed', 'to_wash']:
+                        item.care_status = 'to_wash'
+                    else:
+                        item.care_status = 'to_store'
+                    item.save(update_fields=['status', 'condition', 'care_status', 'updated_at'])
 
     def create(self, validated_data):
         instance = super().create(validated_data)

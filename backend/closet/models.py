@@ -1,5 +1,6 @@
 from django.db import models
 from django.core.validators import MinValueValidator
+from datetime import date
 
 
 class Baby(models.Model):
@@ -101,6 +102,43 @@ class ClothingItem(models.Model):
         ('lent', '借出中'),
     ]
 
+    CARE_STATUS_CHOICES = [
+        ('to_wash', '待清洗'),
+        ('washing', '清洗中'),
+        ('to_dry', '待晾晒'),
+        ('drying', '晾晒中'),
+        ('to_sterilize', '需消毒'),
+        ('sterilizing', '消毒中'),
+        ('to_store', '待入柜'),
+        ('stored', '已入柜'),
+        ('in_use', '穿着中'),
+    ]
+
+    WASH_METHOD_CHOICES = [
+        ('hand', '手洗'),
+        ('machine_normal', '机洗普通'),
+        ('machine_gentle', '机洗轻柔'),
+        ('dry_clean', '干洗'),
+        ('wipe', '擦拭清洁'),
+    ]
+
+    STERILIZE_METHOD_CHOICES = [
+        ('none', '无需消毒'),
+        ('sunlight', '阳光暴晒'),
+        ('steam', '蒸汽消毒'),
+        ('uv', '紫外线消毒'),
+        ('boil', '煮沸消毒'),
+        ('disinfectant', '消毒液浸泡'),
+    ]
+
+    DRY_METHOD_CHOICES = [
+        ('natural_shade', '阴干'),
+        ('natural_sun', '日晒'),
+        ('dryer_low', '烘干机低温'),
+        ('dryer_normal', '烘干机常温'),
+        ('flat_dry', '平铺晾晒'),
+    ]
+
     baby = models.ForeignKey(Baby, on_delete=models.CASCADE, related_name='clothes', verbose_name='所属宝宝')
     name = models.CharField('物品名称', max_length=200)
     category = models.CharField('品类', max_length=30, choices=CATEGORY_CHOICES)
@@ -117,6 +155,15 @@ class ClothingItem(models.Model):
     purchase_date = models.DateField('购入时间', blank=True, null=True)
     purchase_price = models.DecimalField('购入价格', max_digits=10, decimal_places=2, blank=True, null=True)
     status = models.CharField('当前状态', max_length=10, choices=STATUS_CHOICES, default='keep')
+    care_status = models.CharField('护理状态', max_length=15, choices=CARE_STATUS_CHOICES, default='stored')
+    storage_location = models.ForeignKey('StorageLocation', on_delete=models.SET_NULL, null=True, blank=True, related_name='clothes', verbose_name='收纳位置')
+    last_wash_date = models.DateField('最后清洗时间', blank=True, null=True)
+    last_store_date = models.DateTimeField('最后入柜时间', blank=True, null=True)
+    wash_count = models.IntegerField('累计清洗次数', default=0, validators=[MinValueValidator(0)])
+    preferred_wash_method = models.CharField('推荐清洗方式', max_length=20, choices=WASH_METHOD_CHOICES, default='machine_gentle', blank=True)
+    preferred_sterilize_method = models.CharField('推荐消毒方式', max_length=20, choices=STERILIZE_METHOD_CHOICES, default='sunlight', blank=True)
+    preferred_dry_method = models.CharField('推荐晾晒方式', max_length=20, choices=DRY_METHOD_CHOICES, default='natural_shade', blank=True)
+    care_note = models.TextField('护理备注', blank=True, null=True)
     note = models.TextField('备注', blank=True, null=True)
     image_url = models.URLField('图片链接', blank=True, null=True)
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
@@ -371,3 +418,83 @@ class BorrowRecord(models.Model):
         if self.is_overdue() and self.status == 'borrowed':
             self.status = 'overdue'
             self.save(update_fields=['status', 'updated_at'])
+
+
+class StorageLocation(models.Model):
+    LOCATION_TYPE_CHOICES = [
+        ('wardrobe', '衣柜'),
+        ('drawer', '抽屉'),
+        ('shelf', '架子'),
+        ('box', '收纳箱'),
+        ('hanger', '挂架'),
+        ('basket', '收纳篮'),
+        ('bag', '收纳袋'),
+        ('other', '其他'),
+    ]
+
+    baby = models.ForeignKey(Baby, on_delete=models.CASCADE, related_name='storage_locations', verbose_name='所属宝宝')
+    name = models.CharField('位置名称', max_length=100)
+    location_type = models.CharField('位置类型', max_length=20, choices=LOCATION_TYPE_CHOICES, default='wardrobe')
+    container_name = models.CharField('收纳容器/编号', max_length=100, blank=True)
+    area = models.CharField('所在区域', max_length=100, blank=True, help_text='例如：主卧、儿童房、储物间')
+    shelf_level = models.CharField('层/格位置', max_length=50, blank=True, help_text='例如：上层、中层、第三格')
+    sort_order = models.IntegerField('排序权重', default=0)
+    note = models.TextField('备注', blank=True, null=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'storage_location'
+        ordering = ['sort_order', 'name', '-created_at']
+        verbose_name = '收纳位置'
+        verbose_name_plural = verbose_name
+
+    def __str__(self):
+        parts = [self.name]
+        if self.container_name:
+            parts.append(f'[{self.container_name}]')
+        if self.area:
+            parts.append(f'({self.area})')
+        return ''.join(parts)
+
+    def item_count(self):
+        return self.clothes.filter(care_status='stored').count()
+
+
+class CareRecord(models.Model):
+    CARE_TYPE_CHOICES = [
+        ('wash', '清洗'),
+        ('dry', '晾晒'),
+        ('sterilize', '消毒'),
+        ('store', '入柜'),
+        ('retrieve', '取出使用'),
+        ('other', '其他护理'),
+    ]
+
+    WASH_METHOD_CHOICES = ClothingItem.WASH_METHOD_CHOICES
+    STERILIZE_METHOD_CHOICES = ClothingItem.STERILIZE_METHOD_CHOICES
+    DRY_METHOD_CHOICES = ClothingItem.DRY_METHOD_CHOICES
+
+    item = models.ForeignKey(ClothingItem, on_delete=models.CASCADE, related_name='care_records', verbose_name='衣物')
+    care_type = models.CharField('护理类型', max_length=15, choices=CARE_TYPE_CHOICES)
+    care_date = models.DateField('护理日期', default=date.today)
+    care_time = models.DateTimeField('护理时间', auto_now_add=True)
+    wash_method = models.CharField('清洗方式', max_length=20, choices=WASH_METHOD_CHOICES, blank=True, null=True)
+    dry_method = models.CharField('晾晒方式', max_length=20, choices=DRY_METHOD_CHOICES, blank=True, null=True)
+    sterilize_method = models.CharField('消毒方式', max_length=20, choices=STERILIZE_METHOD_CHOICES, blank=True, null=True)
+    storage_location = models.ForeignKey(StorageLocation, on_delete=models.SET_NULL, null=True, blank=True, related_name='care_records', verbose_name='入柜位置')
+    detergent_used = models.CharField('使用洗涤剂', max_length=100, blank=True)
+    water_temperature = models.CharField('水温', max_length=20, blank=True, help_text='例如：30度以下、冷水、温水')
+    duration_minutes = models.IntegerField('处理时长(分钟)', blank=True, null=True, validators=[MinValueValidator(0)])
+    care_note = models.TextField('护理备注', blank=True, null=True)
+    operator = models.CharField('操作人', max_length=50, blank=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+
+    class Meta:
+        db_table = 'care_record'
+        ordering = ['-care_date', '-created_at']
+        verbose_name = '护理记录'
+        verbose_name_plural = verbose_name
+
+    def __str__(self):
+        return f'{self.item.name} - {self.get_care_type_display()} ({self.care_date})'

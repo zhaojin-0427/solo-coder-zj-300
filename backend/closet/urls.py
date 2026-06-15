@@ -11,6 +11,8 @@ router.register(r'transfer-records', views.TransferRecordViewSet)
 router.register(r'season-plans', views.SeasonPlanViewSet, basename='seasonplan')
 router.register(r'borrow-objects', views.BorrowObjectViewSet)
 router.register(r'borrow-records', views.BorrowRecordViewSet, basename='borrowrecord')
+router.register(r'storage-locations', views.StorageLocationViewSet)
+router.register(r'care-records', views.CareRecordViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),

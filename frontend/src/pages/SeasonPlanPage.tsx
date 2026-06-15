@@ -21,6 +21,7 @@ import {
   planItemCategoryOptions,
   itemStatusActionOptions,
   categoryOptions,
+  careStatusTagColors,
 } from '../api'
 import type {
   SeasonPlan,
@@ -466,6 +467,25 @@ export default function SeasonPlanPage() {
           {v}
         </Tag>
       ),
+    },
+    {
+      title: '护理状态',
+      width: 110,
+      render: (_: any, r: SeasonPlanItem) => {
+        if (!r.item_care_status) return <span style={{ color: '#999' }}>-</span>
+        return (
+          <div>
+            <Tag color={careStatusTagColors[r.item_care_status] || 'default'}>
+              {r.item_care_status_display || r.item_care_status}
+            </Tag>
+            {r.item_storage_location_info && (
+              <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+                📍 {r.item_storage_location_info.name}
+              </div>
+            )}
+          </div>
+        )
+      },
     },
   ]
 

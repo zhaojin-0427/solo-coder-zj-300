@@ -16,7 +16,7 @@ import {
 import {
   api, relationOptions, borrowStatusOptions, borrowStatusGroupOptions,
   washStatusOptions, conditionChangeOptions, conditionOptions,
-  categoryOptions,
+  categoryOptions, careStatusOptions, careStatusTagColors,
 } from '../api'
 import type {
   BorrowObject, BorrowRecord, ClothingItem, BorrowStatistics,
@@ -332,6 +332,29 @@ export default function BorrowPage() {
       render: (v: string, r: BorrowRecord) => (
         <Badge status={borrowStatusColorMap[v] as any} text={r.status_display} />
       ),
+    },
+    {
+      title: '护理状态',
+      width: 110,
+      render: (_: any, r: BorrowRecord) => {
+        if ((r.status === 'borrowed' || r.status === 'overdue')) {
+          return <Tag color="cyan">穿着中</Tag>
+        }
+        if (!r.item_care_status) return <span style={{ color: '#999' }}>-</span>
+        return (
+          <Tag color={careStatusTagColors[r.item_care_status] || 'default'}>
+            {r.item_care_status_display || r.item_care_status}
+          </Tag>
+        )
+      },
+    },
+    {
+      title: '清洗状态',
+      width: 100,
+      render: (_: any, r: BorrowRecord) => {
+        if (r.status === 'borrowed' || r.status === 'overdue') return <span style={{ color: '#999' }}>-</span>
+        return <Tag color={washStatusColorMap[r.wash_status] || 'default'}>{r.wash_status_display}</Tag>
+      },
     },
     {
       title: '操作',
@@ -921,7 +944,40 @@ export default function BorrowPage() {
                     label="清洗状态"
                     rules={[{ required: true, message: '请选择清洗状态' }]}
                   >
-                    <Select options={washStatusOptions} />
+                    <Select
+                      options={washStatusOptions}
+                      onChange={(v) => {
+                        if (v === 'unwashed') {
+                          antdApp.message.info('选择"未清洗"后，衣物将自动进入待清洗清单')
+                        }
+                      }}
+                    />
+                  </Form.Item>
+                  <Form.Item noStyle shouldUpdate={(prev, cur) => prev.wash_status !== cur.wash_status}>
+                    {({ getFieldValue }) => {
+                      const ws = getFieldValue('wash_status')
+                      if (ws === 'unwashed') {
+                        return (
+                          <Alert
+                            type="warning"
+                            showIcon
+                            message="归还后该衣物将自动进入「待清洗」清单，可在「护理收纳」页面查看处理"
+                            style={{ marginTop: -8, marginBottom: 12 }}
+                          />
+                        )
+                      }
+                      if (ws === 'washed') {
+                        return (
+                          <Alert
+                            type="success"
+                            showIcon
+                            message="归还后该衣物将进入「待入柜」状态，请及时收纳"
+                            style={{ marginTop: -8, marginBottom: 12 }}
+                          />
+                        )
+                      }
+                      return null
+                    }}
                   </Form.Item>
                 </Col>
                 <Col xs={24} sm={12}>

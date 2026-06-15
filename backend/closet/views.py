@@ -6,18 +6,21 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from collections import defaultdict
 
-from .models import Baby, GrowthRecord, ClothingItem, TransferRecipient, TransferRecord, SeasonPlan, SeasonPlanItem, BorrowObject, BorrowRecord
+from .models import Baby, GrowthRecord, ClothingItem, TransferRecipient, TransferRecord, SeasonPlan, SeasonPlanItem, BorrowObject, BorrowRecord, StorageLocation, CareRecord
 from .serializers import (
     BabySerializer, GrowthRecordSerializer, ClothingItemSerializer,
+    ClothingItemSummarySerializer,
     TransferRecipientSerializer, TransferRecordSerializer,
     SeasonPlanSerializer, SeasonPlanItemSerializer,
     SeasonPlanBatchActionSerializer, SeasonPlanChangeCategorySerializer,
     generate_auto_classified_items, calculate_fit, get_baby_age_months,
     BorrowObjectSerializer, BorrowRecordSerializer, BorrowReturnSerializer,
     BorrowRecordSummarySerializer,
+    StorageLocationSerializer, CareRecordSerializer,
+    CareBatchActionSerializer, CareBatchWashSerializer, CareBatchStoreSerializer,
 )
 
 
@@ -36,9 +39,9 @@ class GrowthRecordViewSet(viewsets.ModelViewSet):
 class ClothingItemViewSet(viewsets.ModelViewSet):
     queryset = ClothingItem.objects.all()
     serializer_class = ClothingItemSerializer
-    filterset_fields = ['baby', 'category', 'season', 'condition', 'status']
+    filterset_fields = ['baby', 'category', 'season', 'condition', 'status', 'care_status', 'storage_location']
     search_fields = ['name', 'brand']
-    ordering_fields = ['created_at', 'purchase_date', 'max_height']
+    ordering_fields = ['created_at', 'purchase_date', 'max_height', 'last_wash_date', 'last_store_date', 'wash_count']
 
     @action(detail=False, methods=['get'], url_path='fit-analysis')
     def fit_analysis(self, request):
@@ -63,6 +66,240 @@ class ClothingItemViewSet(viewsets.ModelViewSet):
 
         counts = {k: len(v) for k, v in result.items()}
         return Response({'counts': counts, 'items': result})
+
+    @action(detail=False, methods=['get'], url_path='care-summary')
+    def care_summary(self, request):
+        baby_id = request.query_params.get('baby')
+        items = self.get_queryset()
+        if baby_id:
+            items = items.filter(baby_id=baby_id)
+
+        care_status_stats = items.values('care_status').annotate(count=Count('id'))
+        care_map = dict(ClothingItem.CARE_STATUS_CHOICES)
+        care_status_dist = {}
+        for cs in care_status_stats:
+            care_status_dist[care_map.get(cs['care_status'], cs['care_status'])] = cs['count']
+
+        pending_items = items.filter(care_status__in=['to_wash', 'washing', 'to_dry', 'drying', 'to_sterilize', 'sterilizing', 'to_store'])
+        to_wash_count = items.filter(care_status='to_wash').count()
+        to_sterilize_count = items.filter(care_status='to_sterilize').count()
+        to_store_count = items.filter(care_status='to_store').count()
+        stored_count = items.filter(care_status='stored').count()
+        in_use_count = items.filter(care_status='in_use').count()
+
+        thirty_days_ago = date.today() - timedelta(days=30)
+        recent_wash_count = CareRecord.objects.filter(
+            care_type='wash',
+            care_date__gte=thirty_days_ago,
+        )
+        if baby_id:
+            recent_wash_count = recent_wash_count.filter(item__baby_id=baby_id)
+        recent_wash_count = recent_wash_count.count()
+
+        total_items = items.count()
+        sterilized_recent = CareRecord.objects.filter(
+            care_type='sterilize',
+            care_date__gte=thirty_days_ago,
+        )
+        if baby_id:
+            sterilized_recent = sterilized_recent.filter(item__baby_id=baby_id)
+        sterilized_item_ids = sterilized_recent.values_list('item_id', flat=True).distinct()
+        sterilize_coverage = round(len(sterilized_item_ids) / total_items * 100, 1) if total_items > 0 else 0
+
+        long_not_stored = items.filter(
+            care_status__in=['to_wash', 'washing', 'to_dry', 'drying', 'to_sterilize', 'sterilizing', 'to_store', 'in_use'],
+            last_store_date__lte=timezone.now() - timedelta(days=14),
+        )
+        if baby_id:
+            long_not_stored = long_not_stored.filter(baby_id=baby_id)
+        long_not_stored_count = long_not_stored.count()
+        long_not_stored_items = ClothingItemSummarySerializer(long_not_stored[:10], many=True).data
+
+        return Response({
+            'care_status_distribution': care_status_dist,
+            'pending_count': pending_items.count(),
+            'to_wash_count': to_wash_count,
+            'to_sterilize_count': to_sterilize_count,
+            'to_store_count': to_store_count,
+            'stored_count': stored_count,
+            'in_use_count': in_use_count,
+            'recent_30d_wash_count': recent_wash_count,
+            'sterilize_coverage_30d': sterilize_coverage,
+            'long_not_stored_count': long_not_stored_count,
+            'long_not_stored_items': long_not_stored_items,
+        })
+
+    @action(detail=False, methods=['get'], url_path='pending-list')
+    def pending_list(self, request):
+        baby_id = request.query_params.get('baby')
+        care_status = request.query_params.get('care_status')
+        items = self.get_queryset()
+        if baby_id:
+            items = items.filter(baby_id=baby_id)
+
+        if care_status:
+            items = items.filter(care_status=care_status)
+        else:
+            items = items.filter(care_status__in=['to_wash', 'washing', 'to_dry', 'drying', 'to_sterilize', 'sterilizing', 'to_store'])
+
+        items = items.order_by('care_status', '-updated_at')
+        serializer = ClothingItemSummarySerializer(items, many=True)
+        return Response({
+            'count': items.count(),
+            'items': serializer.data,
+        })
+
+    @action(detail=False, methods=['post'], url_path='batch-care-status')
+    def batch_care_status(self, request):
+        serializer = CareBatchActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        item_ids = data['item_ids']
+        new_care_status = data['care_status']
+
+        items = ClothingItem.objects.filter(id__in=item_ids)
+        lent_items = items.filter(status='lent')
+        lent_count = lent_items.count()
+
+        processable = items.exclude(status='lent')
+        updated_count = processable.update(care_status=new_care_status, updated_at=timezone.now())
+
+        if new_care_status == 'stored':
+            now = timezone.now()
+            processable.update(last_store_date=now)
+            for item in processable:
+                CareRecord.objects.create(
+                    item=item,
+                    care_type='store',
+                    care_date=now.date(),
+                    storage_location=item.storage_location,
+                    care_note='批量操作：标记已入柜',
+                )
+        elif new_care_status == 'to_wash':
+            for item in processable:
+                CareRecord.objects.create(
+                    item=item,
+                    care_type='other',
+                    care_date=date.today(),
+                    care_note='批量操作：标记待清洗',
+                )
+        elif new_care_status == 'to_sterilize':
+            for item in processable:
+                CareRecord.objects.create(
+                    item=item,
+                    care_type='other',
+                    care_date=date.today(),
+                    care_note='批量操作：标记需消毒',
+                )
+        elif new_care_status == 'in_use':
+            for item in processable:
+                CareRecord.objects.create(
+                    item=item,
+                    care_type='retrieve',
+                    care_date=date.today(),
+                    care_note='批量操作：取出使用',
+                )
+
+        return Response({
+            'message': f'已更新 {updated_count} 件衣物护理状态',
+            'updated_count': updated_count,
+            'skipped_lent_count': lent_count,
+        })
+
+    @action(detail=False, methods=['post'], url_path='batch-wash')
+    def batch_wash(self, request):
+        serializer = CareBatchWashSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        item_ids = data['item_ids']
+        care_date = data.get('care_date') or date.today()
+
+        items = ClothingItem.objects.filter(id__in=item_ids).exclude(status='lent')
+        updated_count = items.count()
+
+        now = timezone.now()
+        for item in items:
+            CareRecord.objects.create(
+                item=item,
+                care_type='wash',
+                care_date=care_date,
+                wash_method=data.get('wash_method'),
+                detergent_used=data.get('detergent_used', ''),
+                water_temperature=data.get('water_temperature', ''),
+                care_note=data.get('care_note', ''),
+                operator=data.get('operator', ''),
+            )
+            if data.get('sterilize_method'):
+                CareRecord.objects.create(
+                    item=item,
+                    care_type='sterilize',
+                    care_date=care_date,
+                    sterilize_method=data.get('sterilize_method'),
+                    care_note=data.get('care_note', ''),
+                    operator=data.get('operator', ''),
+                )
+            if data.get('dry_method'):
+                CareRecord.objects.create(
+                    item=item,
+                    care_type='dry',
+                    care_date=care_date,
+                    dry_method=data.get('dry_method'),
+                    care_note=data.get('care_note', ''),
+                    operator=data.get('operator', ''),
+                )
+
+        items.update(
+            care_status='to_store',
+            last_wash_date=care_date,
+            wash_count=models.F('wash_count') + 1,
+            updated_at=now,
+        )
+
+        return Response({
+            'message': f'已记录 {updated_count} 件衣物清洗记录',
+            'updated_count': updated_count,
+        })
+
+    @action(detail=False, methods=['post'], url_path='batch-store')
+    def batch_store(self, request):
+        serializer = CareBatchStoreSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        item_ids = data['item_ids']
+        storage_location_id = data['storage_location']
+        care_date = data.get('care_date') or date.today()
+
+        try:
+            location = StorageLocation.objects.get(id=storage_location_id)
+        except StorageLocation.DoesNotExist:
+            return Response({'error': '收纳位置不存在'}, status=status.HTTP_400_BAD_REQUEST)
+
+        items = ClothingItem.objects.filter(id__in=item_ids).exclude(status='lent')
+        updated_count = items.count()
+
+        now = timezone.now()
+        for item in items:
+            CareRecord.objects.create(
+                item=item,
+                care_type='store',
+                care_date=care_date,
+                storage_location=location,
+                care_note=data.get('care_note', ''),
+                operator=data.get('operator', ''),
+            )
+
+        items.update(
+            care_status='stored',
+            storage_location=location,
+            last_store_date=now,
+            updated_at=now,
+        )
+
+        return Response({
+            'message': f'已将 {updated_count} 件衣物入柜到「{location.name}」',
+            'updated_count': updated_count,
+            'storage_location': StorageLocationSerializer(location).data,
+        })
 
 
 class TransferRecipientViewSet(viewsets.ModelViewSet):
@@ -157,12 +394,23 @@ class BorrowRecordViewSet(viewsets.ModelViewSet):
                 item.status = 'keep'
             if record.return_condition and record.return_condition != record.original_condition:
                 item.condition = record.return_condition
-            item.save(update_fields=['status', 'condition', 'updated_at'])
+            if record.wash_status in ['unwashed', 'to_wash']:
+                item.care_status = 'to_wash'
+                CareRecord.objects.create(
+                    item=item,
+                    care_type='other',
+                    care_date=date.today(),
+                    care_note=f'借穿归还，未清洗，自动进入待清洗清单。借穿人：{record.borrower_name or "未知"}。',
+                )
+            else:
+                item.care_status = 'to_store'
+            item.save(update_fields=['status', 'condition', 'care_status', 'updated_at'])
 
         return Response({
             'message': '归还确认成功',
             'record': BorrowRecordSummarySerializer(record).data,
             'suggest_transfer': record.suggest_transfer,
+            'entered_wash_queue': record.wash_status in ['unwashed', 'to_wash'],
         })
 
     @action(detail=False, methods=['get'], url_path='statistics')
@@ -376,6 +624,96 @@ class StatisticsView(APIView):
             'current_lent_rate': lent_item_rate,
         }
 
+        thirty_days_ago = date.today() - timedelta(days=30)
+        care_records_qs = CareRecord.objects.all()
+        storage_qs = StorageLocation.objects.all()
+        if baby_id:
+            care_records_qs = care_records_qs.filter(item__baby_id=baby_id)
+            storage_qs = storage_qs.filter(baby_id=baby_id)
+
+        recent_30d_wash_count = care_records_qs.filter(
+            care_type='wash',
+            care_date__gte=thirty_days_ago,
+        ).count()
+
+        to_wash_count = clothes_qs.filter(care_status='to_wash').count()
+        washing_count = clothes_qs.filter(care_status='washing').count()
+        to_dry_count = clothes_qs.filter(care_status='to_dry').count()
+        drying_count = clothes_qs.filter(care_status='drying').count()
+        to_sterilize_count = clothes_qs.filter(care_status='to_sterilize').count()
+        sterilizing_count = clothes_qs.filter(care_status='sterilizing').count()
+        to_store_count = clothes_qs.filter(care_status='to_store').count()
+        stored_count = clothes_qs.filter(care_status='stored').count()
+        in_use_count = clothes_qs.filter(care_status='in_use').count()
+        pending_total = to_wash_count + washing_count + to_dry_count + drying_count + to_sterilize_count + sterilizing_count + to_store_count
+
+        care_status_dist = {}
+        care_status_label_map = dict(ClothingItem.CARE_STATUS_CHOICES)
+        care_status_stats = clothes_qs.values('care_status').annotate(count=Count('id'))
+        for cs in care_status_stats:
+            care_status_dist[care_status_label_map.get(cs['care_status'], cs['care_status'])] = cs['count']
+
+        sterilized_recent = care_records_qs.filter(
+            care_type='sterilize',
+            care_date__gte=thirty_days_ago,
+        )
+        sterilized_item_ids = sterilized_recent.values_list('item_id', flat=True).distinct()
+        sterilize_coverage = round(len(sterilized_item_ids) / total_items * 100, 1) if total_items > 0 else 0
+
+        storage_location_stats = storage_qs.annotate(
+            stored_count=Count('clothes', filter=Q(clothes__care_status='stored'))
+        ).order_by('-stored_count', 'sort_order', 'name')[:5]
+        most_used_locations = []
+        for sl in storage_location_stats:
+            most_used_locations.append({
+                'id': sl.id,
+                'name': sl.name,
+                'location_type': sl.location_type,
+                'location_type_display': sl.get_location_type_display(),
+                'container_name': sl.container_name,
+                'area': sl.area,
+                'stored_count': sl.stored_count,
+            })
+
+        fourteen_days_ago = timezone.now() - timedelta(days=14)
+        long_not_stored_qs = clothes_qs.filter(
+            care_status__in=['to_wash', 'washing', 'to_dry', 'drying', 'to_sterilize', 'sterilizing', 'to_store', 'in_use'],
+        ).filter(
+            Q(last_store_date__lte=fourteen_days_ago) | Q(last_store_date__isnull=True)
+        ).order_by('updated_at')
+        long_not_stored_count = long_not_stored_qs.count()
+        long_not_stored_items = ClothingItemSummarySerializer(long_not_stored_qs[:10], many=True).data
+
+        wash_method_stats = care_records_qs.filter(
+            care_type='wash',
+            care_date__gte=thirty_days_ago,
+        ).values('wash_method').annotate(count=Count('id')).order_by('-count')
+        wash_method_dist = {}
+        wash_method_map = dict(ClothingItem.WASH_METHOD_CHOICES)
+        for wm in wash_method_stats:
+            if wm['wash_method']:
+                wash_method_dist[wash_method_map.get(wm['wash_method'], wm['wash_method'])] = wm['count']
+
+        care_stats = {
+            'recent_30d_wash_count': recent_30d_wash_count,
+            'to_wash_count': to_wash_count,
+            'washing_count': washing_count,
+            'to_dry_count': to_dry_count,
+            'drying_count': drying_count,
+            'to_sterilize_count': to_sterilize_count,
+            'sterilizing_count': sterilizing_count,
+            'to_store_count': to_store_count,
+            'stored_count': stored_count,
+            'in_use_count': in_use_count,
+            'pending_total': pending_total,
+            'care_status_distribution': care_status_dist,
+            'sterilize_coverage_30d': sterilize_coverage,
+            'most_used_locations': most_used_locations,
+            'long_not_stored_count': long_not_stored_count,
+            'long_not_stored_items': long_not_stored_items,
+            'wash_method_distribution': wash_method_dist,
+        }
+
         return Response({
             'overview': {
                 'total_items': total_items,
@@ -398,6 +736,7 @@ class StatisticsView(APIView):
             'monthly_transfers': {'labels': monthly_x, 'values': monthly_y},
             'season_plan_stats': season_plan_stats,
             'borrow_stats': borrow_stats,
+            'care_stats': care_stats,
         })
 
     def _calculate_size_cycle(self, given_items_qs, growth_qs):
@@ -1004,3 +1343,88 @@ class SeasonPlanViewSet(viewsets.ModelViewSet):
             })
 
         return Response({'recent_plans': recent_plan_stats})
+
+
+class StorageLocationViewSet(viewsets.ModelViewSet):
+    queryset = StorageLocation.objects.all()
+    serializer_class = StorageLocationSerializer
+    filterset_fields = ['baby', 'location_type']
+    search_fields = ['name', 'container_name', 'area', 'shelf_level']
+    ordering_fields = ['sort_order', 'name', 'created_at']
+
+    @action(detail=False, methods=['get'], url_path='with-items')
+    def with_items(self, request):
+        baby_id = request.query_params.get('baby')
+        qs = self.get_queryset()
+        if baby_id:
+            qs = qs.filter(baby_id=baby_id)
+
+        locations = []
+        for loc in qs:
+            loc_data = StorageLocationSerializer(loc).data
+            stored_items = ClothingItem.objects.filter(
+                storage_location=loc,
+                care_status='stored'
+            )
+            if baby_id:
+                stored_items = stored_items.filter(baby_id=baby_id)
+            loc_data['stored_items'] = ClothingItemSummarySerializer(stored_items, many=True).data
+            loc_data['stored_item_count'] = stored_items.count()
+            locations.append(loc_data)
+
+        return Response({
+            'count': len(locations),
+            'locations': locations,
+        })
+
+
+class CareRecordViewSet(viewsets.ModelViewSet):
+    queryset = CareRecord.objects.all()
+    serializer_class = CareRecordSerializer
+    filterset_fields = ['item', 'care_type', 'wash_method', 'dry_method', 'sterilize_method', 'storage_location']
+    search_fields = ['care_note', 'detergent_used', 'operator', 'item__name']
+    ordering_fields = ['care_date', 'created_at', 'duration_minutes']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        baby_id = self.request.query_params.get('baby')
+        if baby_id:
+            queryset = queryset.filter(item__baby_id=baby_id)
+        item_id = self.request.query_params.get('item_id')
+        if item_id:
+            queryset = queryset.filter(item_id=item_id)
+        care_type = self.request.query_params.get('care_type')
+        if care_type:
+            queryset = queryset.filter(care_type=care_type)
+        return queryset
+
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        instance = CareRecord.objects.get(id=response.data['id'])
+        self._sync_item_care_status(instance)
+        return response
+
+    def _sync_item_care_status(self, instance):
+        item = instance.item
+        if not item:
+            return
+        care_type = instance.care_type
+        now = timezone.now()
+        if care_type == 'wash':
+            item.last_wash_date = instance.care_date
+            item.wash_count = (item.wash_count or 0) + 1
+            item.care_status = 'to_store'
+            item.save(update_fields=['last_wash_date', 'wash_count', 'care_status', 'updated_at'])
+        elif care_type == 'sterilize':
+            if item.care_status in ['to_sterilize']:
+                item.care_status = 'to_store'
+                item.save(update_fields=['care_status', 'updated_at'])
+        elif care_type == 'store':
+            item.care_status = 'stored'
+            item.last_store_date = now
+            if instance.storage_location:
+                item.storage_location = instance.storage_location
+            item.save(update_fields=['care_status', 'last_store_date', 'storage_location', 'updated_at'])
+        elif care_type == 'retrieve':
+            item.care_status = 'in_use'
+            item.save(update_fields=['care_status', 'updated_at'])

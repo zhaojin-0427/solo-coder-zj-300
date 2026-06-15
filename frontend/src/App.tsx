@@ -9,6 +9,7 @@ import {
   BarChartOutlined,
   CalendarOutlined,
   ShareAltOutlined,
+  MedicineBoxOutlined,
 } from '@ant-design/icons'
 import type { Baby } from './types'
 import { api } from './api'
@@ -19,6 +20,7 @@ import GrowthFitPage from './pages/GrowthFitPage'
 import StatisticsPage from './pages/StatisticsPage'
 import SeasonPlanPage from './pages/SeasonPlanPage'
 import BorrowPage from './pages/BorrowPage'
+import CarePage from './pages/CarePage'
 
 const { Sider, Content, Header } = Layout
 
@@ -63,6 +65,7 @@ export default function App() {
 
   const menuItems = [
     { key: '/clothing', icon: <HddOutlined />, label: '物品档案' },
+    { key: '/care', icon: <MedicineBoxOutlined />, label: '护理收纳' },
     { key: '/size-tracking', icon: <ArrowsAltOutlined />, label: '尺码追踪' },
     { key: '/season-plan', icon: <CalendarOutlined />, label: '换季计划' },
     { key: '/borrow', icon: <ShareAltOutlined />, label: '借穿管理' },
@@ -94,6 +97,7 @@ export default function App() {
             <Routes>
               <Route path="/" element={<Navigate to="/clothing" replace />} />
               <Route path="/clothing" element={<ClothingPage />} />
+              <Route path="/care" element={<CarePage />} />
               <Route path="/size-tracking" element={<SizeTrackingPage />} />
               <Route path="/season-plan" element={<SeasonPlanPage />} />
               <Route path="/borrow" element={<BorrowPage />} />
