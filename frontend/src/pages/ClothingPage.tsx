@@ -401,10 +401,16 @@ export default function ClothingPage() {
                 name="status"
                 label="当前状态"
                 rules={[{ required: true }]}
-                extra={editingItem?.status === 'lent' ? '⚠️ 借出中衣物请在借穿管理页操作归还' : ''}
+                extra={
+                  editingItem?.status === 'lent'
+                    ? '⚠️ 借出中衣物请在借穿管理页操作归还'
+                    : !editingItem
+                    ? '💡 如需借出，请先创建衣物再到借穿管理页登记'
+                    : ''
+                }
               >
                 <Select
-                  options={statusOptionsWithLent}
+                  options={editingItem?.status === 'lent' ? statusOptionsWithLent : statusOptions}
                   disabled={editingItem?.status === 'lent'}
                 />
               </Form.Item>

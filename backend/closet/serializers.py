@@ -118,6 +118,24 @@ class ClothingItemSerializer(serializers.ModelSerializer):
             return BorrowRecordSummarySerializer(current_borrow).data
         return None
 
+    def validate_status(self, value):
+        if self.instance:
+            old_status = self.instance.status
+            if old_status != 'lent' and value == 'lent':
+                raise serializers.ValidationError(
+                    '不能直接将物品状态改为借出中，请通过借穿管理页面登记借出。'
+                )
+            if old_status == 'lent' and value != 'lent':
+                raise serializers.ValidationError(
+                    '借出中物品不能直接修改状态，请通过借穿管理页面操作归还。'
+                )
+        else:
+            if value == 'lent':
+                raise serializers.ValidationError(
+                    '新建物品不能设为借出中状态，请先创建物品再通过借穿管理页面登记借出。'
+                )
+        return value
+
 
 class TransferRecipientSerializer(serializers.ModelSerializer):
     class Meta:
@@ -314,7 +332,7 @@ class SeasonPlanItemSerializer(serializers.ModelSerializer):
         return None
 
     def get_item_current_borrow(self, obj):
-        if obj.item and hasattr(obj.item, 'is_borrowed') and obj.item.is_borrowed:
+        if obj.item and obj.item.status == 'lent':
             current_borrow = BorrowRecord.objects.filter(
                 item=obj.item,
                 status__in=['borrowed', 'overdue']

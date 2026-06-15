@@ -363,7 +363,7 @@ class BorrowRecord(models.Model):
 
     def is_overdue(self):
         from datetime import date
-        if self.status == 'borrowed' and self.expected_return_date:
+        if self.status in ['borrowed', 'overdue'] and self.expected_return_date:
             return date.today() > self.expected_return_date
         return False
 
